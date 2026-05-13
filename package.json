@@ -1,0 +1,19 @@
+{
+  "name": "devbrain-teaching",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Teaching episode output layer for a local gbrain installation.",
+  "bin": {
+    "devbrain-teaching": "src/index.ts"
+  },
+  "scripts": {
+    "doctor": "bun run src/index.ts doctor",
+    "candidates": "bun run src/index.ts candidates",
+    "test": "bun test"
+  },
+  "engines": {
+    "bun": ">=1.3.10"
+  }
+}
+
