@@ -1,6 +1,9 @@
 #!/usr/bin/env bun
 
 import { isGbrainCallable, runGbrain } from "./gbrainClient.js";
+import { parseCodexIngestArgs } from "./cliArgs.js";
+import { runCodexGbrainIngest } from "./codexGbrainIngest.js";
+import { runJinaSmoke, startJinaProxy } from "./jinaProxy.js";
 
 const command = process.argv[2] ?? "help";
 
@@ -23,9 +26,31 @@ if (command === "doctor") {
     console.log("- score only items with concrete event + decision + tradeoff + transferable principle");
     console.log("- write candidate review artifacts under .devbrain-teaching/runs/");
   }
+} else if (command === "jina-proxy") {
+  startJinaProxy();
+} else if (command === "jina-smoke") {
+  try {
+    await runJinaSmoke();
+  } catch (error) {
+    console.error(error instanceof Error ? error.message : String(error));
+    process.exitCode = 1;
+  }
+} else if (command === "codex-ingest") {
+  try {
+    const args = parseCodexIngestArgs(process.argv.slice(3));
+    const result = runCodexGbrainIngest({ limit: args.limit });
+    console.log(`Codex sessions ingested: ${result.transcriptsWritten}`);
+    console.log(`Source root: ${result.sourceRoot}`);
+    console.log(`Run artifacts: ${result.runDir}`);
+  } catch (error) {
+    console.error(error instanceof Error ? error.message : String(error));
+    process.exitCode = 1;
+  }
 } else {
   console.log("Usage:");
   console.log("  bun run doctor");
   console.log("  bun run candidates");
+  console.log("  bun run jina-proxy");
+  console.log("  bun run jina-smoke");
+  console.log("  bun run codex-ingest -- --limit 20");
 }
-

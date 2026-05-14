@@ -10,10 +10,12 @@
   "scripts": {
     "doctor": "bun run src/index.ts doctor",
     "candidates": "bun run src/index.ts candidates",
+    "jina-proxy": "bun run src/index.ts jina-proxy",
+    "jina-smoke": "bun run src/index.ts jina-smoke",
+    "codex-ingest": "bun run src/index.ts codex-ingest",
     "test": "bun test"
   },
   "engines": {
     "bun": ">=1.3.10"
   }
 }
-

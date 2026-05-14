@@ -1,6 +1,9 @@
 .devbrain-teaching/runs/
 .devbrain-teaching/cache/
+.devbrain-teaching/gbrain-sources/
 node_modules/
 dist/
 *.log
-
+.env
+.env.*
+!.env.example
