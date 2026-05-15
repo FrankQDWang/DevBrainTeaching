@@ -1,8 +1,10 @@
 #!/usr/bin/env bun
 
 import { isGbrainCallable, runGbrain } from "./gbrainClient.js";
-import { parseCodexIngestArgs } from "./cliArgs.js";
-import { runCodexGbrainIngest } from "./codexGbrainIngest.js";
+import { parseCodexCollectArgs } from "./cliArgs.js";
+import { collectCodexSessions } from "./codexCollector.js";
+import { runCodexDreamCycle } from "./codexDreamCycle.js";
+import { checkGbrainDreamReadiness } from "./gbrainDreamCheck.js";
 import { runJinaSmoke, startJinaProxy } from "./jinaProxy.js";
 
 const command = process.argv[2] ?? "help";
@@ -36,12 +38,34 @@ if (command === "doctor") {
     process.exitCode = 1;
   }
 } else if (command === "codex-ingest") {
+  console.error("codex-ingest is deprecated. Use codex-collect to prepare gbrain dream transcript corpus.");
+  process.exitCode = 1;
+} else if (command === "codex-collect") {
   try {
-    const args = parseCodexIngestArgs(process.argv.slice(3));
-    const result = runCodexGbrainIngest({ limit: args.limit });
-    console.log(`Codex sessions ingested: ${result.transcriptsWritten}`);
-    console.log(`Source root: ${result.sourceRoot}`);
+    const args = parseCodexCollectArgs(process.argv.slice(3));
+    const result = collectCodexSessions({ limit: args.limit });
+    console.log(`Codex sessions considered: ${result.considered}`);
+    console.log(`Transcripts written: ${result.written}`);
+    console.log(`Corpus: ${result.corpusDir}`);
     console.log(`Run artifacts: ${result.runDir}`);
+  } catch (error) {
+    console.error(error instanceof Error ? error.message : String(error));
+    process.exitCode = 1;
+  }
+} else if (command === "gbrain-dream-check") {
+  try {
+    const args = parseCodexCollectArgs(process.argv.slice(3));
+    const brainDir = args.brainDir ?? process.env.GBRAIN_DREAM_DIR;
+    console.log(JSON.stringify(checkGbrainDreamReadiness({ brainDir }), null, 2));
+  } catch (error) {
+    console.error(error instanceof Error ? error.message : String(error));
+    process.exitCode = 1;
+  }
+} else if (command === "codex-dream-cycle") {
+  try {
+    const args = parseCodexCollectArgs(process.argv.slice(3));
+    const brainDir = args.brainDir ?? process.env.GBRAIN_DREAM_DIR;
+    runCodexDreamCycle({ limit: args.limit, dryRun: args.dryRun, brainDir });
   } catch (error) {
     console.error(error instanceof Error ? error.message : String(error));
     process.exitCode = 1;
@@ -52,5 +76,7 @@ if (command === "doctor") {
   console.log("  bun run candidates");
   console.log("  bun run jina-proxy");
   console.log("  bun run jina-smoke");
-  console.log("  bun run codex-ingest -- --limit 20");
+  console.log("  bun run codex-collect -- --limit 20");
+  console.log("  bun run gbrain-dream-check");
+  console.log("  bun run codex-dream-cycle -- --limit 20 --dry-run --brain-dir /path/to/brain");
 }

@@ -1,4 +1,6 @@
 import { describe, expect, it } from "bun:test";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 
 import { parseCodexSessionJsonl } from "../src/codexSessionParser.js";
 
@@ -118,5 +120,32 @@ describe("codex session parser", () => {
     expect(serialized).not.toContain("sk-abcdefghijklmnopqrstuvwxyz");
     expect(serialized).toContain("[REDACTED_SECRET]");
     expect(session.dropped.secretsRedacted).toBeGreaterThanOrEqual(3);
+  });
+
+  it("covers current Codex JSONL fixture shapes", () => {
+    const fixtureDir = join(process.cwd(), "tests/fixtures");
+    const fixtureNames = [
+      "codex-session-response-item.jsonl",
+      "codex-session-event-msg.jsonl",
+      "codex-session-large-tool-output.jsonl",
+      "codex-session-reasoning-encrypted.jsonl",
+      "codex-session-agents-block.jsonl",
+    ];
+    const parsed = fixtureNames.map((name) =>
+      parseCodexSessionJsonl({
+        sourcePath: join(fixtureDir, name),
+        content: readFileSync(join(fixtureDir, name), "utf8"),
+      }),
+    );
+
+    const serialized = JSON.stringify(parsed);
+    expect(serialized).not.toContain("encrypted_content");
+    expect(serialized).not.toContain("private reasoning");
+    expect(serialized).not.toContain("# AGENTS.md instructions");
+    expect(parsed.some((session) => session.dropped.textFieldsTruncated > 0)).toBe(true);
+    expect(parsed.some((session) => session.userGoals.length > 0)).toBe(true);
+
+    const duplicateNeedle = "large duplicated user message unique marker";
+    expect(serialized.indexOf(duplicateNeedle)).toBe(serialized.lastIndexOf(duplicateNeedle));
   });
 });

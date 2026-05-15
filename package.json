@@ -12,6 +12,9 @@
     "candidates": "bun run src/index.ts candidates",
     "jina-proxy": "bun run src/index.ts jina-proxy",
     "jina-smoke": "bun run src/index.ts jina-smoke",
+    "codex-collect": "bun run src/index.ts codex-collect",
+    "gbrain-dream-check": "bun run src/index.ts gbrain-dream-check",
+    "codex-dream-cycle": "bun run src/index.ts codex-dream-cycle",
     "codex-ingest": "bun run src/index.ts codex-ingest",
     "test": "bun test"
   },

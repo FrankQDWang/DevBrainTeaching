@@ -1,18 +1,14 @@
 import { createHash } from "node:crypto";
 
+import { boundText, redactText } from "./redaction.js";
+
 const maxTextFieldChars = 2_000;
 const maxUserGoals = 6;
 const maxAssistantNotes = 12;
 const maxOutcomes = 6;
 const maxCommandResults = 30;
 const maxFilePaths = 80;
-
-const secretPatterns = [
-  /sk-[A-Za-z0-9_-]{20,}/g,
-  /Bearer\s+[A-Za-z0-9._-]+/g,
-  /\b(OPENAI_API_KEY|ANTHROPIC_API_KEY|JINA_API_KEY)=\S+/g,
-  /https?:\/\/[^:\s]+:[^@\s]+@/g,
-];
+export const codexSessionParserVersion = "codex-session-parser-v1";
 
 export interface ParseCodexSessionInput {
   sourcePath: string;
@@ -51,21 +47,16 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 }
 
 function redactSecrets(value: string, dropped: CodexParserDropStats): string {
-  let redacted = value;
-  for (const pattern of secretPatterns) {
-    redacted = redacted.replace(pattern, () => {
-      dropped.secretsRedacted += 1;
-      return "[REDACTED_SECRET]";
-    });
-  }
-  return redacted;
+  const result = redactText(value);
+  dropped.secretsRedacted += result.count;
+  return result.text;
 }
 
 function boundedText(value: string, dropped: CodexParserDropStats): string {
   const redacted = redactSecrets(value, dropped).trim();
-  if (redacted.length <= maxTextFieldChars) return redacted;
-  dropped.textFieldsTruncated += 1;
-  return `${redacted.slice(0, maxTextFieldChars)}\n[TRUNCATED]`;
+  const result = boundText(redacted, maxTextFieldChars);
+  if (result.truncated) dropped.textFieldsTruncated += 1;
+  return result.text;
 }
 
 function textFromContent(content: unknown, dropped: CodexParserDropStats): string[] {
@@ -147,6 +138,29 @@ function pushMeaningfulText(target: string[], texts: string[], max: number, drop
     return !lowSignal;
   });
   pushBounded(target, meaningful, max, dropped);
+}
+
+function dedupeSessionText(session: ParsedCodexSession): void {
+  const seen = new Set<string>();
+  const dedupe = (values: string[]): string[] => {
+    const result: string[] = [];
+    for (const value of values) {
+      if (seen.has(value)) {
+        session.dropped.lowSignalEvents += 1;
+        continue;
+      }
+      seen.add(value);
+      result.push(value);
+    }
+    return result;
+  };
+
+  session.userGoals = dedupe(session.userGoals);
+  session.projectContext = dedupe(session.projectContext);
+  session.keyEvents = dedupe(session.keyEvents);
+  session.assistantNotes = dedupe(session.assistantNotes);
+  session.commandResults = dedupe(session.commandResults);
+  session.outcomes = dedupe(session.outcomes);
 }
 
 export function parseCodexSessionJsonl(input: ParseCodexSessionInput): ParsedCodexSession {
@@ -274,5 +288,6 @@ export function parseCodexSessionJsonl(input: ParseCodexSessionInput): ParsedCod
     dropped.lowSignalEvents += 1;
   }
 
+  dedupeSessionText(session);
   return session;
 }

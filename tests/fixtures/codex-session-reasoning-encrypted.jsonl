@@ -1,0 +1,5 @@
+{"timestamp":"2026-05-14T04:00:00.000Z","payload":{"type":"session_meta","id":"reasoning-session","cwd":"/repo"}}
+{"timestamp":"2026-05-14T04:01:00.000Z","payload":{"type":"message","role":"assistant","phase":"analysis","content":[{"text":"private reasoning"}]}}
+{"timestamp":"2026-05-14T04:02:00.000Z","payload":{"type":"reasoning","content":[{"text":"private reasoning summary"}]}}
+{"timestamp":"2026-05-14T04:03:00.000Z","payload":{"type":"message","role":"user","content":[{"encrypted_content":"encrypted_content"}]}}
+{"timestamp":"2026-05-14T04:04:00.000Z","payload":{"type":"message","role":"user","content":[{"text":"Keep only the useful user request."}]}}

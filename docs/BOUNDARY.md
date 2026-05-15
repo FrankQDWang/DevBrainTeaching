@@ -28,3 +28,12 @@ DevBrainTeaching -> gbrain CLI/MCP -> gbrain data
 Do not import gbrain internal TypeScript modules or write directly into its
 database schema in the first iteration.
 
+## Codex Sessions
+
+Codex App sessions are raw material. DevBrainTeaching may collect, redact,
+compact, and stage them as a transcript corpus. GBrain owns the decision about
+what becomes reflections, facts, patterns, takes, or searchable memory through
+dream/autopilot.
+
+Do not make this repo generate final durable lessons from Codex sessions. That
+turns the adapter into the knowledge engine and bypasses gbrain.

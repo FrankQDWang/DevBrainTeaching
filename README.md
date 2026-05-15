@@ -28,7 +28,7 @@ This project should stay decoupled from the upstream gbrain checkout:
 ```bash
 bun run doctor
 bun run candidates
-bun run codex-ingest -- --limit 20
+bun run gbrain-dream-check
 ```
 
 `doctor` checks that the gbrain CLI is callable. `candidates` currently prints
@@ -41,30 +41,29 @@ at a specific binary:
 GBRAIN_BIN=/path/to/gbrain bun run doctor
 ```
 
-## Codex Session Ingestion
+## Codex Session Corpus For GBrain Dream
 
-`codex-ingest` normalizes recent Codex App JSONL sessions into a compact,
-git-ignored gbrain source instead of importing raw private logs.
+DevBrainTeaching does not decide which Codex lessons are durable. It prepares
+safe raw material for gbrain's `dream` / `autopilot` mechanism.
 
 ```bash
-LITELLM_BASE_URL=http://127.0.0.1:8787/v1 \
-GBRAIN_EMBEDDING_MODEL=litellm:jina-embeddings-v4 \
-GBRAIN_EMBEDDING_DIMENSIONS=1536 \
-bun run codex-ingest -- --limit 20
+bun run codex-collect -- --limit 20
+bun run gbrain-dream-check
+GBRAIN_DREAM_DIR=/path/to/gbrain-brain-repo bun run codex-dream-cycle -- --limit 20 --dry-run
 ```
 
-Safety boundaries:
+`codex-collect` writes compact `.txt` transcripts under
+`.devbrain-teaching/dream-corpus/codex-sessions/`. `gbrain-dream-check`
+verifies whether gbrain is configured to read that corpus. `codex-dream-cycle
+-- --dry-run` is the safe diagnostic path when `GBRAIN_DREAM_DIR`,
+`--brain-dir`, or gbrain `sync.repo_path` identifies the brain repo; gbrain
+dry-run may still spend cheap verdict-model tokens. A recurring scheduler
+should use `codex-dream-cycle -- --limit 20 --brain-dir /path/to/gbrain-brain-repo`
+only after readiness passes.
 
-- `--limit` must be an integer from 1 to 20.
-- `.devbrain-teaching/gbrain-sources/` must be ignored by git before any
-  transcript is written.
-- generated transcripts are written to a temp snapshot, then atomically replace
-  `.devbrain-teaching/gbrain-sources/codex-sessions/transcripts/`.
-- gbrain source registration uses dedicated non-federated source
-  `codex-sessions`.
-- run artifacts are written under `.devbrain-teaching/runs/<run-id>/`.
-- verification uses source-scoped gbrain calls:
-  `gbrain call --source codex-sessions search ...`.
+The old `codex-ingest` command is deprecated because it directly registered a
+gbrain source and embedded Codex sessions. That bypassed gbrain's
+self-evolving dream/autopilot boundary.
 
 ## Jina v4 Embedding Proxy
 

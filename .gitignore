@@ -1,6 +1,8 @@
 .devbrain-teaching/runs/
 .devbrain-teaching/cache/
 .devbrain-teaching/gbrain-sources/
+.devbrain-teaching/dream-corpus/
+.devbrain-teaching/state/
 node_modules/
 dist/
 *.log
