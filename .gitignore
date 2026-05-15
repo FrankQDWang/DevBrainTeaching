@@ -3,6 +3,10 @@
 .devbrain-teaching/gbrain-sources/
 .devbrain-teaching/dream-corpus/
 .devbrain-teaching/state/
+.devbrain-teaching/postgres-data/
+.devbrain-teaching/models/
+.devbrain-teaching/gbrain-v5/
+.devbrain-teaching/venv/
 node_modules/
 dist/
 *.log

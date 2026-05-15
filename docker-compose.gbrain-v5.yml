@@ -1,0 +1,19 @@
+name: devbrainteaching-gbrain-v5
+
+services:
+  gbrain-v5-postgres:
+    image: pgvector/pgvector:pg17
+    container_name: devbrainteaching-gbrain-v5-postgres
+    environment:
+      POSTGRES_DB: devbrainteaching_gbrain_v5
+      POSTGRES_USER: gbrain_v5
+      POSTGRES_PASSWORD: ${GBRAIN_V5_POSTGRES_PASSWORD:?GBRAIN_V5_POSTGRES_PASSWORD is required}
+    ports:
+      - "127.0.0.1:55433:5432"
+    volumes:
+      - ./.devbrain-teaching/postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U gbrain_v5 -d devbrainteaching_gbrain_v5"]
+      interval: 5s
+      timeout: 5s
+      retries: 20

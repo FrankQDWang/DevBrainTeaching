@@ -4,6 +4,16 @@ export interface CodexCollectCliArgs {
   brainDir?: string;
 }
 
+export interface GbrainV5InitCliArgs {
+  dryRun: boolean;
+}
+
+export type JinaV5ServiceAction = "install" | "uninstall" | "start" | "stop" | "restart" | "status" | "plist";
+
+export interface JinaV5ServiceCliArgs {
+  action: JinaV5ServiceAction;
+}
+
 export function parseLimit(raw: string | undefined): number {
   if (raw === undefined) return 20;
   if (!/^\d+$/.test(raw)) {
@@ -46,4 +56,29 @@ export function parseCodexCollectArgs(args: string[]): CodexCollectCliArgs {
   }
 
   return { limit: parseLimit(limitRaw), dryRun, ...(brainDir ? { brainDir } : {}) };
+}
+
+export function parseGbrainV5InitArgs(args: string[]): GbrainV5InitCliArgs {
+  let dryRun = false;
+
+  for (const arg of args) {
+    if (arg === "--dry-run") {
+      dryRun = true;
+    } else {
+      throw new Error(`Unknown gbrain v5 init argument: ${arg}`);
+    }
+  }
+
+  return { dryRun };
+}
+
+export function parseJinaV5ServiceArgs(args: string[]): JinaV5ServiceCliArgs {
+  const action = args[0] ?? "status";
+  if (args.length > 1) {
+    throw new Error(`Unknown jina v5 service argument: ${args.slice(1).join(" ")}`);
+  }
+  if (!["install", "uninstall", "start", "stop", "restart", "status", "plist"].includes(action)) {
+    throw new Error(`Unknown jina v5 service action: ${action}`);
+  }
+  return { action: action as JinaV5ServiceAction };
 }

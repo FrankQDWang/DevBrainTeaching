@@ -1,6 +1,6 @@
 import { describe, expect, it } from "bun:test";
 
-import { parseCodexCollectArgs, parseLimit } from "../src/cliArgs.js";
+import { parseCodexCollectArgs, parseGbrainV5InitArgs, parseJinaV5ServiceArgs, parseLimit } from "../src/cliArgs.js";
 
 describe("codex collect CLI args", () => {
   it("defaults to a safe latest-session slice", () => {
@@ -26,5 +26,30 @@ describe("codex collect CLI args", () => {
       dryRun: true,
       brainDir: "/tmp/brain",
     });
+  });
+});
+
+describe("gbrain v5 init CLI args", () => {
+  it("parses dry-run", () => {
+    expect(parseGbrainV5InitArgs(["--dry-run"])).toEqual({ dryRun: true });
+    expect(parseGbrainV5InitArgs([])).toEqual({ dryRun: false });
+  });
+
+  it("rejects unknown init args", () => {
+    expect(() => parseGbrainV5InitArgs(["--force"])).toThrow(/Unknown gbrain v5 init argument/);
+  });
+});
+
+describe("jina v5 service CLI args", () => {
+  it("defaults to status and accepts explicit service actions", () => {
+    expect(parseJinaV5ServiceArgs([])).toEqual({ action: "status" });
+    expect(parseJinaV5ServiceArgs(["install"])).toEqual({ action: "install" });
+    expect(parseJinaV5ServiceArgs(["uninstall"])).toEqual({ action: "uninstall" });
+    expect(parseJinaV5ServiceArgs(["restart"])).toEqual({ action: "restart" });
+  });
+
+  it("rejects unknown service actions", () => {
+    expect(() => parseJinaV5ServiceArgs(["delete"])).toThrow(/Unknown jina v5 service action/);
+    expect(() => parseJinaV5ServiceArgs(["status", "extra"])).toThrow(/Unknown jina v5 service argument/);
   });
 });

@@ -1,10 +1,20 @@
 #!/usr/bin/env bun
 
 import { isGbrainCallable, runGbrain } from "./gbrainClient.js";
-import { parseCodexCollectArgs } from "./cliArgs.js";
+import { parseCodexCollectArgs, parseGbrainV5InitArgs, parseJinaV5ServiceArgs } from "./cliArgs.js";
 import { collectCodexSessions } from "./codexCollector.js";
 import { runCodexDreamCycle } from "./codexDreamCycle.js";
 import { checkGbrainDreamReadiness } from "./gbrainDreamCheck.js";
+import {
+  checkGbrainV5Readiness,
+  defaultGbrainV5Runtime,
+  describeGbrainV5Env,
+  jinaV5ServiceSpec,
+  runJinaV5ServiceAction,
+  runGbrainV5Init,
+  setupJinaV5Venv,
+  type GbrainV5Command,
+} from "./gbrainV5Runtime.js";
 import { runJinaSmoke, startJinaProxy } from "./jinaProxy.js";
 
 const command = process.argv[2] ?? "help";
@@ -33,6 +43,71 @@ if (command === "doctor") {
 } else if (command === "jina-smoke") {
   try {
     await runJinaSmoke();
+  } catch (error) {
+    console.error(error instanceof Error ? error.message : String(error));
+    process.exitCode = 1;
+  }
+} else if (command === "jina-v5-setup") {
+  try {
+    const results = setupJinaV5Venv();
+    for (const result of results) {
+      console.log(result.stdout.trim() || result.stderr.trim() || result.command.join(" "));
+    }
+  } catch (error) {
+    console.error(error instanceof Error ? error.message : String(error));
+    process.exitCode = 1;
+  }
+} else if (command === "jina-v5-service") {
+  try {
+    const args = parseJinaV5ServiceArgs(process.argv.slice(3));
+    const results = runJinaV5ServiceAction({ action: args.action });
+    const runtime = defaultGbrainV5Runtime();
+    const spec = jinaV5ServiceSpec(runtime);
+    console.log(`Jina v5 service action: ${args.action}`);
+    console.log(`Repo LaunchAgent: ${spec.plistPath}`);
+    console.log(`Installed LaunchAgent: ${spec.installedPlistPath}`);
+    for (const result of results) {
+      const output = result.stdout.trim() || result.stderr.trim();
+      if (output) console.log(output);
+      if (result.exitCode !== 0 && args.action !== "stop") {
+        process.exitCode = 1;
+      }
+    }
+  } catch (error) {
+    console.error(error instanceof Error ? error.message : String(error));
+    process.exitCode = 1;
+  }
+} else if (command === "gbrain-v5-env") {
+  const runtime = defaultGbrainV5Runtime();
+  console.log(JSON.stringify(describeGbrainV5Env(runtime), null, 2));
+} else if (command === "gbrain-v5-check") {
+  try {
+    const runtime = defaultGbrainV5Runtime();
+    const report = await checkGbrainV5Readiness({ runtime });
+    console.log(JSON.stringify(report, null, 2));
+    if (!report.ready) process.exitCode = 1;
+  } catch (error) {
+    console.error(error instanceof Error ? error.message : String(error));
+    process.exitCode = 1;
+  }
+} else if (command === "gbrain-v5-init") {
+  try {
+    const args = parseGbrainV5InitArgs(process.argv.slice(3));
+    const result = await runGbrainV5Init({ dryRun: args.dryRun });
+    if (args.dryRun) {
+      const dryRun = result as GbrainV5Command;
+      console.log(JSON.stringify({
+        command: dryRun.command,
+        args: dryRun.redactedArgs,
+        env: dryRun.redactedEnv,
+      }, null, 2));
+    } else if (result.exitCode !== 0) {
+      console.error(result.stderr.trim() || result.stdout.trim());
+      process.exitCode = 1;
+    } else {
+      console.log(result.stdout.trim());
+      console.log(`Repo-local config: ${defaultGbrainV5Runtime().configPath}`);
+    }
   } catch (error) {
     console.error(error instanceof Error ? error.message : String(error));
     process.exitCode = 1;
@@ -76,6 +151,12 @@ if (command === "doctor") {
   console.log("  bun run candidates");
   console.log("  bun run jina-proxy");
   console.log("  bun run jina-smoke");
+  console.log("  bun run jina-v5-mlx-server");
+  console.log("  bun run jina-v5-setup");
+  console.log("  bun run jina-v5-service -- install|uninstall|start|stop|restart|status");
+  console.log("  bun run gbrain-v5-env");
+  console.log("  bun run gbrain-v5-check");
+  console.log("  bun run gbrain-v5-init -- --dry-run");
   console.log("  bun run codex-collect -- --limit 20");
   console.log("  bun run gbrain-dream-check");
   console.log("  bun run codex-dream-cycle -- --limit 20 --dry-run --brain-dir /path/to/brain");
