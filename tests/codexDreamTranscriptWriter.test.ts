@@ -28,12 +28,18 @@ function session(): ParsedCodexSession {
 describe("dream transcript writer", () => {
   it("renders raw material for gbrain dream without claiming final lessons", () => {
     const markdown = renderDreamTranscript(session());
-    expect(markdown).toContain("type: codex-session-transcript");
+    expect(markdown).toContain("type: experience-evidence-envelope");
     expect(markdown).toContain("dream_generated: false");
-    expect(markdown).toContain('source_path_redacted: "$HOME/.codex/sessions/s.jsonl"');
-    expect(markdown).toContain('cwd_redacted: "$HOME/Agents/DevBrainTeaching"');
-    expect(markdown).toContain("## Reusable Raw Material");
+    expect(markdown).toContain("# Experience Evidence Envelope");
+    expect(markdown).toContain("## Observed Evidence");
+    expect(markdown).toContain("[commands] bun test");
+    expect(markdown).toContain("[commandResults] pass");
     expect(markdown).toContain("## Trust Boundary");
+    expect(markdown).toContain("This is raw evidence");
+    expect(markdown).not.toContain("type: codex-session-transcript");
+    expect(markdown).not.toContain("Likely dream");
+    expect(markdown).not.toContain("Malformed JSONL lines dropped");
+    expect(markdown).not.toContain("Secrets redacted");
     expect(markdown).not.toContain("promotion_ready");
     expect(markdown).not.toContain("/Users/frankqdwang");
   });

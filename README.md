@@ -52,8 +52,15 @@ bun run gbrain-dream-check
 GBRAIN_DREAM_DIR=/path/to/gbrain-brain-repo bun run codex-dream-cycle -- --limit 20 --dry-run
 ```
 
-`codex-collect` writes compact `.txt` transcripts under
-`.devbrain-teaching/dream-corpus/codex-sessions/`. `gbrain-dream-check`
+`codex-collect` writes envelope-first `.txt` transcripts under
+`.devbrain-teaching/dream-corpus/codex-sessions/`. Each transcript is an
+Experience Evidence Envelope: goal, context, observed source events, tool
+calls, tool results, assistant commentary, assistant final output, referenced
+files, trust boundary, and provenance. This is still raw material.
+DevBrainTeaching does not decide that an item is a lesson; gbrain dream/verdict
+decides what, if anything, becomes durable knowledge.
+
+`gbrain-dream-check`
 verifies whether gbrain is configured to read that corpus. `codex-dream-cycle
 -- --dry-run` is the safe diagnostic path when `GBRAIN_DREAM_DIR`,
 `--brain-dir`, or gbrain `sync.repo_path` identifies the brain repo; gbrain
@@ -178,6 +185,7 @@ Use the v5 dream wrappers for Codex-session absorption:
 
 ```bash
 bun run codex-collect -- --limit 20
+GBRAIN_DREAM_DIR=/path/to/gbrain-brain-repo bun run gbrain-v5-dream-check
 GBRAIN_DREAM_DIR=/path/to/gbrain-brain-repo bun run codex-v5-dream-cycle -- --limit 20 --dry-run
 ```
 

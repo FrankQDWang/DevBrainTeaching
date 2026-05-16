@@ -1,6 +1,6 @@
 import { describe, expect, it } from "bun:test";
 
-import { boundText, redactText } from "../src/redaction.js";
+import { boundText, redactLocalPaths, redactText } from "../src/redaction.js";
 
 describe("redaction", () => {
   it("redacts common secrets", () => {
@@ -46,5 +46,14 @@ describe("redaction", () => {
     const result = boundText("abcdef", 3);
     expect(result.text).toBe("abc\n[TRUNCATED]");
     expect(result.truncated).toBe(true);
+  });
+
+  it("redacts the current home path without hard-coded usernames", () => {
+    const home = process.env.HOME ?? "/tmp/home";
+    const result = redactLocalPaths(`open ${home}/Agents/DevBrainTeaching/src/index.ts`);
+
+    expect(result.text).toBe("open $HOME/Agents/DevBrainTeaching/src/index.ts");
+    expect(result.count).toBe(1);
+    expect(result.text).not.toContain(home);
   });
 });

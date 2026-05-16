@@ -40,6 +40,22 @@ export function redactText(value: string): RedactionResult {
   return { text, count };
 }
 
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+export function redactLocalPaths(value: string, home = process.env.HOME): RedactionResult {
+  const redacted = redactText(value);
+  if (!home) return redacted;
+  const homePattern = new RegExp(escapeRegExp(home), "g");
+  let count = redacted.count;
+  const text = redacted.text.replace(homePattern, () => {
+    count += 1;
+    return "$HOME";
+  });
+  return { text, count };
+}
+
 export function boundText(value: string, maxChars: number): BoundTextResult {
   if (value.length <= maxChars) return { text: value, truncated: false };
   return { text: `${value.slice(0, maxChars)}\n[TRUNCATED]`, truncated: true };

@@ -6,7 +6,15 @@ import { spawnSync } from "node:child_process";
 
 import { parseLimit } from "./cliArgs.js";
 import { codexSessionParserVersion, parseCodexSessionJsonl, type ParsedCodexSession } from "./codexSessionParser.js";
-import { dreamRendererVersion, dreamTranscriptFilename, renderDreamTranscript } from "./codexDreamTranscriptWriter.js";
+import { dreamRendererVersion, dreamTranscriptFilename } from "./codexDreamTranscriptWriter.js";
+import {
+  buildCodexExperienceEnvelope,
+  codexSessionAdapterVersion,
+  experienceEnvelopeVersion,
+  type ExperienceEvidenceEnvelope,
+  type ExperienceEnvelopeQuality,
+} from "./experienceEnvelope.js";
+import { renderExperienceEnvelope } from "./experienceEnvelopeWriter.js";
 import { redactionVersion } from "./redaction.js";
 
 export interface CollectCodexSessionsOptions {
@@ -33,6 +41,7 @@ interface CollectorState {
   parser_version: string;
   renderer_version: string;
   redaction_version: string;
+  envelope_version: string;
   updated_at: string;
   counters: {
     considered: number;
@@ -42,6 +51,17 @@ interface CollectorState {
     malformed: number;
     redacted: number;
     truncated: number;
+    envelope_evidence_items: number;
+    envelope_with_goal: number;
+    envelope_with_source_event: number;
+    envelope_with_tool_call: number;
+    envelope_with_tool_result: number;
+    envelope_with_assistant_final: number;
+    envelope_likely_dream_reviewable: number;
+    envelope_redacted_count: number;
+    envelope_truncated_count: number;
+    envelope_malformed_count: number;
+    envelope_low_signal_count: number;
   };
   sessions: Record<
     string,
@@ -163,6 +183,8 @@ function fingerprint(session: ParsedCodexSession): string {
     codexSessionParserVersion,
     dreamRendererVersion,
     redactionVersion,
+    codexSessionAdapterVersion,
+    experienceEnvelopeVersion,
   ].join(":");
 }
 
@@ -193,6 +215,17 @@ function renderReport(state: CollectorState): string {
     `- Malformed lines dropped: ${state.counters.malformed}`,
     `- Secrets redacted: ${state.counters.redacted}`,
     `- Text fields truncated: ${state.counters.truncated}`,
+    `- Envelope evidence items: ${state.counters.envelope_evidence_items}`,
+    `- Envelope sessions with goal: ${state.counters.envelope_with_goal}`,
+    `- Envelope sessions with source event: ${state.counters.envelope_with_source_event}`,
+    `- Envelope sessions with tool call: ${state.counters.envelope_with_tool_call}`,
+    `- Envelope sessions with tool result: ${state.counters.envelope_with_tool_result}`,
+    `- Envelope sessions with assistant final: ${state.counters.envelope_with_assistant_final}`,
+    `- Envelope likely dream-reviewable: ${state.counters.envelope_likely_dream_reviewable}`,
+    `- Envelope redacted count: ${state.counters.envelope_redacted_count}`,
+    `- Envelope truncated count: ${state.counters.envelope_truncated_count}`,
+    `- Envelope malformed count: ${state.counters.envelope_malformed_count}`,
+    `- Envelope low-signal count: ${state.counters.envelope_low_signal_count}`,
     "",
   ].join("\n");
 }
@@ -235,16 +268,44 @@ export function collectCodexSessions(options: CollectCodexSessionsOptions = {}):
     malformed: 0,
     redacted: 0,
     truncated: 0,
+    envelope_evidence_items: 0,
+    envelope_with_goal: 0,
+    envelope_with_source_event: 0,
+    envelope_with_tool_call: 0,
+    envelope_with_tool_result: 0,
+    envelope_with_assistant_final: 0,
+    envelope_likely_dream_reviewable: 0,
+    envelope_redacted_count: 0,
+    envelope_truncated_count: 0,
+    envelope_malformed_count: 0,
+    envelope_low_signal_count: 0,
   };
 
-  const parsedSessions: ParsedCodexSession[] = [];
+  const parsedRecords: Array<{
+    session: ParsedCodexSession;
+    envelope: ExperienceEvidenceEnvelope;
+    quality: ExperienceEnvelopeQuality;
+  }> = [];
   for (const file of files) {
     const content = readFileSync(file, "utf8");
     const session = parseCodexSessionJsonl({ sourcePath: file, content });
-    parsedSessions.push(session);
+    const envelopeResult = buildCodexExperienceEnvelope(session);
+    const envelopeQuality = envelopeResult.quality;
+    parsedRecords.push({ session, envelope: envelopeResult.envelope, quality: envelopeQuality });
     counters.malformed += session.dropped.malformedLines;
     counters.redacted += session.dropped.secretsRedacted;
     counters.truncated += session.dropped.textFieldsTruncated;
+    counters.envelope_evidence_items += envelopeQuality.evidence_count;
+    if (envelopeQuality.has_goal) counters.envelope_with_goal += 1;
+    if (envelopeQuality.has_source_event) counters.envelope_with_source_event += 1;
+    if (envelopeQuality.has_tool_call) counters.envelope_with_tool_call += 1;
+    if (envelopeQuality.has_tool_result) counters.envelope_with_tool_result += 1;
+    if (envelopeQuality.has_assistant_final) counters.envelope_with_assistant_final += 1;
+    if (envelopeQuality.likely_dream_reviewable) counters.envelope_likely_dream_reviewable += 1;
+    counters.envelope_redacted_count += envelopeQuality.redacted_count;
+    counters.envelope_truncated_count += envelopeQuality.truncated_count;
+    counters.envelope_malformed_count += envelopeQuality.malformed_count;
+    counters.envelope_low_signal_count += envelopeQuality.low_signal_count;
     const name = dreamTranscriptFilename(session);
     const outPath = join(corpusDir, name);
     assertContained(corpusDir, outPath);
@@ -254,7 +315,7 @@ export function collectCodexSessions(options: CollectCodexSessionsOptions = {}):
     if (previousSession?.fingerprint === nextFingerprint && existsSync(outPath)) {
       counters.unchanged += 1;
     } else {
-      writePrivateFileAtomic(outPath, renderDreamTranscript(session));
+      writePrivateFileAtomic(outPath, renderExperienceEnvelope(envelopeResult.envelope));
       counters.written += 1;
     }
     sessions[sessionKey] = {
@@ -273,6 +334,7 @@ export function collectCodexSessions(options: CollectCodexSessionsOptions = {}):
     parser_version: codexSessionParserVersion,
     renderer_version: dreamRendererVersion,
     redaction_version: redactionVersion,
+    envelope_version: experienceEnvelopeVersion,
     updated_at: now.toISOString(),
     counters,
     sessions,
@@ -284,7 +346,7 @@ export function collectCodexSessions(options: CollectCodexSessionsOptions = {}):
     generated_at: now.toISOString(),
     corpus_dir: corpusDir,
     state_path: statePath,
-    sessions: parsedSessions.map((session) => ({
+    sessions: parsedRecords.map(({ session, quality }) => ({
       session_id: session.sessionId,
       source_path: session.sourcePath,
       transcript_path: join(corpusDir, dreamTranscriptFilename(session)),
@@ -292,6 +354,7 @@ export function collectCodexSessions(options: CollectCodexSessionsOptions = {}):
       source_size_bytes: session.sourceSizeBytes,
       started_at: session.startedAt,
       dropped: session.dropped,
+      envelope_quality: quality,
     })),
     counters,
   };
