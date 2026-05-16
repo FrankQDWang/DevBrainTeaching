@@ -7,6 +7,7 @@ import { runCodexDreamCycle } from "./codexDreamCycle.js";
 import { checkGbrainDreamReadiness } from "./gbrainDreamCheck.js";
 import {
   checkGbrainV5Readiness,
+  createGbrainV5Runner,
   defaultGbrainV5Runtime,
   describeGbrainV5Env,
   jinaV5ServiceSpec,
@@ -136,11 +137,33 @@ if (command === "doctor") {
     console.error(error instanceof Error ? error.message : String(error));
     process.exitCode = 1;
   }
+} else if (command === "gbrain-v5-dream-check") {
+  try {
+    const args = parseCodexCollectArgs(process.argv.slice(3));
+    const brainDir = args.brainDir ?? process.env.GBRAIN_DREAM_DIR;
+    const runtime = defaultGbrainV5Runtime();
+    const runner = createGbrainV5Runner({ runtime });
+    console.log(JSON.stringify(checkGbrainDreamReadiness({ brainDir, runner }), null, 2));
+  } catch (error) {
+    console.error(error instanceof Error ? error.message : String(error));
+    process.exitCode = 1;
+  }
 } else if (command === "codex-dream-cycle") {
   try {
     const args = parseCodexCollectArgs(process.argv.slice(3));
     const brainDir = args.brainDir ?? process.env.GBRAIN_DREAM_DIR;
     runCodexDreamCycle({ limit: args.limit, dryRun: args.dryRun, brainDir });
+  } catch (error) {
+    console.error(error instanceof Error ? error.message : String(error));
+    process.exitCode = 1;
+  }
+} else if (command === "codex-v5-dream-cycle") {
+  try {
+    const args = parseCodexCollectArgs(process.argv.slice(3));
+    const brainDir = args.brainDir ?? process.env.GBRAIN_DREAM_DIR;
+    const runtime = defaultGbrainV5Runtime();
+    const runner = createGbrainV5Runner({ runtime });
+    runCodexDreamCycle({ limit: args.limit, dryRun: args.dryRun, brainDir, runner });
   } catch (error) {
     console.error(error instanceof Error ? error.message : String(error));
     process.exitCode = 1;
@@ -160,4 +183,6 @@ if (command === "doctor") {
   console.log("  bun run codex-collect -- --limit 20");
   console.log("  bun run gbrain-dream-check");
   console.log("  bun run codex-dream-cycle -- --limit 20 --dry-run --brain-dir /path/to/brain");
+  console.log("  bun run gbrain-v5-dream-check");
+  console.log("  bun run codex-v5-dream-cycle -- --limit 20 --dry-run --brain-dir /path/to/brain");
 }

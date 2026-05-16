@@ -8,6 +8,7 @@ import {
   buildGbrainV5Env,
   buildGbrainV5InitCommand,
   checkGbrainV5Readiness,
+  createGbrainV5Runner,
   defaultGbrainV5Runtime,
   describeGbrainV5Env,
   jinaV5ServiceSpec,
@@ -141,6 +142,38 @@ describe("gbrain v5 runtime", () => {
     ]);
     expect(command.env.GBRAIN_HOME).toBe(resolve("/repo/.devbrain-teaching/gbrain-v5"));
     expect(command.redactedEnv.GBRAIN_DATABASE_URL).toBe("postgresql://gbrain_v5:***@127.0.0.1:55433/devbrainteaching_gbrain_v5");
+  });
+
+  it("wraps arbitrary gbrain calls with the repo-local v5 environment", () => {
+    const runtime = defaultGbrainV5Runtime({ cwd: "/repo" });
+    const calls: Array<{ command: string; args: string[]; env: NodeJS.ProcessEnv }> = [];
+    const runner = createGbrainV5Runner({
+      runtime,
+      baseEnv: {
+        PATH: "/bin",
+        GBRAIN_BIN: "/custom/gbrain",
+        GBRAIN_HOME: "/Users/frank/.gbrain",
+        LITELLM_BASE_URL: "http://wrong",
+        GBRAIN_EMBEDDING_MODEL: "litellm:wrong",
+        GBRAIN_EMBEDDING_DIMENSIONS: "1536",
+        GBRAIN_V5_POSTGRES_PASSWORD: "secret",
+      },
+      runner: (command, args, env) => {
+        calls.push({ command, args, env });
+        return { command: [command, ...args], exitCode: 0, stdout: "ok", stderr: "" };
+      },
+    });
+
+    runner(["dream", "--dry-run"]);
+
+    expect(calls).toHaveLength(1);
+    expect(calls[0]?.command).toBe("/custom/gbrain");
+    expect(calls[0]?.args).toEqual(["dream", "--dry-run"]);
+    expect(calls[0]?.env.GBRAIN_HOME).toBe(resolve("/repo/.devbrain-teaching/gbrain-v5"));
+    expect(calls[0]?.env.LITELLM_BASE_URL).toBe("http://127.0.0.1:8797/v1");
+    expect(calls[0]?.env.GBRAIN_EMBEDDING_MODEL).toBe("litellm:jina-embeddings-v5-text-small");
+    expect(calls[0]?.env.GBRAIN_EMBEDDING_DIMENSIONS).toBe("1024");
+    expect(calls[0]?.env.GBRAIN_DATABASE_URL).toBe("postgresql://gbrain_v5:secret@127.0.0.1:55433/devbrainteaching_gbrain_v5");
   });
 
   it("passes repo-local env into every gbrain readiness command and avoids config show", async () => {

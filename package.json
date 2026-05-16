@@ -21,6 +21,8 @@
     "codex-collect": "bun run src/index.ts codex-collect",
     "gbrain-dream-check": "bun run src/index.ts gbrain-dream-check",
     "codex-dream-cycle": "bun run src/index.ts codex-dream-cycle",
+    "gbrain-v5-dream-check": "bun run src/index.ts gbrain-v5-dream-check",
+    "codex-v5-dream-cycle": "bun run src/index.ts codex-v5-dream-cycle",
     "codex-ingest": "bun run src/index.ts codex-ingest",
     "test": "bun test"
   },

@@ -150,6 +150,7 @@ Check readiness:
 ```bash
 bun run gbrain-v5-env
 bun run gbrain-v5-check
+GBRAIN_DREAM_DIR=/path/to/gbrain-brain-repo bun run gbrain-v5-dream-check
 ```
 
 Initialize the repo-local gbrain config:
@@ -172,3 +173,17 @@ the source of truth for the active config path.
 
 The runtime uses `jina-embeddings-v5-text-small` at 1024 dimensions. Existing
 1536-dimensional v4 brains must not be mixed with this runtime.
+
+Use the v5 dream wrappers for Codex-session absorption:
+
+```bash
+bun run codex-collect -- --limit 20
+GBRAIN_DREAM_DIR=/path/to/gbrain-brain-repo bun run codex-v5-dream-cycle -- --limit 20 --dry-run
+```
+
+`gbrain-v5-dream-check` and `codex-v5-dream-cycle` inject the repo-local
+`GBRAIN_HOME`, local Jina v5 endpoint, 1024-dimensional embedding route, and
+v5 Postgres URL before calling gbrain. Prefer them over the generic
+`gbrain-dream-check` / `codex-dream-cycle` commands when working with this
+runtime; the generic commands intentionally reflect whatever gbrain
+environment the current shell already has.

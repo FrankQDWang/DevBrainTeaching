@@ -3,7 +3,7 @@ import { copyFileSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSyn
 import { homedir } from "node:os";
 import { dirname, resolve, sep } from "node:path";
 
-import type { CommandResult } from "./gbrainClient.js";
+import type { CommandResult, GbrainRunner } from "./gbrainClient.js";
 import type { JinaV5ServiceAction } from "./cliArgs.js";
 
 export interface GbrainV5Runtime {
@@ -192,6 +192,24 @@ export function redactGbrainV5Env(runtime: GbrainV5Runtime, env: NodeJS.ProcessE
     JINA_V5_EMBEDDING_DIMENSIONS: env.JINA_V5_EMBEDDING_DIMENSIONS,
     GBRAIN_DATABASE_URL: redactedGbrainV5DatabaseUrl(runtime),
   };
+}
+
+export function createGbrainV5Runner(options: {
+  runtime?: GbrainV5Runtime;
+  postgresPassword?: string;
+  baseEnv?: NodeJS.ProcessEnv;
+  runner?: RuntimeRunner;
+} = {}): GbrainRunner {
+  const runtime = options.runtime ?? defaultGbrainV5Runtime();
+  assertRepoLocalRuntime(runtime);
+  const password = options.postgresPassword ?? options.baseEnv?.GBRAIN_V5_POSTGRES_PASSWORD ?? process.env.GBRAIN_V5_POSTGRES_PASSWORD;
+  const env = password
+    ? buildGbrainV5Env(runtime, { postgresPassword: password, baseEnv: options.baseEnv ?? process.env })
+    : buildGbrainV5BaseEnv(runtime, options.baseEnv ?? process.env);
+  const command = env.GBRAIN_BIN ?? process.env.GBRAIN_BIN ?? "gbrain";
+  const runner = options.runner ?? spawnRuntimeCommand;
+
+  return (args: string[]): CommandResult => runner(command, args, env);
 }
 
 export function buildGbrainV5InitCommand(runtime: GbrainV5Runtime, postgresPassword: string): GbrainV5Command {
