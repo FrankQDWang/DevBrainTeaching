@@ -90,6 +90,18 @@ describe("gbrain v5 runtime", () => {
     expect(env.GBRAIN_EMBEDDING_DIMENSIONS).toBe("1024");
   });
 
+  it("maps DeepSeek keys into the Anthropic-compatible route for upstream gbrain dream", () => {
+    const runtime = defaultGbrainV5Runtime({ cwd: "/repo" });
+    const env = buildGbrainV5BaseEnv(runtime, {
+      PATH: "/bin",
+      DEEPSEEK_API_KEY: "deepseek-secret",
+    });
+
+    expect(env.DEEPSEEK_API_KEY).toBe("deepseek-secret");
+    expect(env.ANTHROPIC_API_KEY).toBe("deepseek-secret");
+    expect(env.ANTHROPIC_BASE_URL).toBe("https://api.deepseek.com/anthropic");
+  });
+
   it("describes only whitelisted non-secret env diagnostics", () => {
     const runtime = defaultGbrainV5Runtime({ cwd: "/repo" });
     const description = describeGbrainV5Env(runtime, {

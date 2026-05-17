@@ -141,6 +141,13 @@ export function buildGbrainV5BaseEnv(runtime: GbrainV5Runtime, baseEnv: NodeJS.P
     }
   }
 
+  if (!cleanEnv.ANTHROPIC_API_KEY && cleanEnv.DEEPSEEK_API_KEY) {
+    cleanEnv.ANTHROPIC_API_KEY = cleanEnv.DEEPSEEK_API_KEY;
+  }
+  if (!cleanEnv.ANTHROPIC_BASE_URL && cleanEnv.DEEPSEEK_API_KEY) {
+    cleanEnv.ANTHROPIC_BASE_URL = "https://api.deepseek.com/anthropic";
+  }
+
   return {
     ...cleanEnv,
     GBRAIN_HOME: runtime.gbrainHome,
