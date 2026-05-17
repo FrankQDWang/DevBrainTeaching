@@ -41,10 +41,17 @@ at a specific binary:
 GBRAIN_BIN=/path/to/gbrain bun run doctor
 ```
 
-## Codex Session Corpus For GBrain Dream
+## Engineering Experience Episodes
 
-DevBrainTeaching does not decide which Codex lessons are durable. It prepares
-safe raw material for gbrain's `dream` / `autopilot` mechanism.
+DevBrainTeaching prepares Codex App sessions as deterministic engineering raw
+material. It does not decide final lessons and does not write gbrain knowledge
+directly. GBrain owns durable synthesis through `dream` / `autopilot`.
+
+The flow is:
+
+```text
+Codex session JSONL -> redacted parser output -> evidence envelope -> engineering episode -> gbrain dream/autopilot
+```
 
 ```bash
 bun run codex-collect -- --limit 20
@@ -52,21 +59,31 @@ bun run gbrain-dream-check
 GBRAIN_DREAM_DIR=/path/to/gbrain-brain-repo bun run codex-dream-cycle -- --limit 20 --dry-run
 ```
 
-`codex-collect` writes envelope-first `.txt` transcripts under
-`.devbrain-teaching/dream-corpus/codex-sessions/`. Each transcript is an
-Experience Evidence Envelope: goal, context, observed source events, tool
-calls, tool results, assistant commentary, assistant final output, referenced
-files, trust boundary, and provenance. This is still raw material.
-DevBrainTeaching does not decide that an item is a lesson; gbrain dream/verdict
-decides what, if anything, becomes durable knowledge.
+`codex-collect` writes engineering-focused `.engineering.txt` transcripts under
+`.devbrain-teaching/dream-corpus/codex-engineering/`. It may also write raw
+debug envelopes under `.devbrain-teaching/debug/envelopes/codex-sessions/`,
+but those debug files are not the configured dream corpus by default.
+
+`gbrain-dream-check` should show that
+`dream.synthesize.session_corpus_dir` points to
+`.devbrain-teaching/dream-corpus/codex-engineering`, not the raw debug envelope
+directory or the old `.devbrain-teaching/dream-corpus/codex-sessions` path.
 
 `gbrain-dream-check`
-verifies whether gbrain is configured to read that corpus. `codex-dream-cycle
--- --dry-run` is the safe diagnostic path when `GBRAIN_DREAM_DIR`,
+verifies whether gbrain is configured to read the engineering corpus.
+`codex-dream-cycle -- --dry-run` is the safe diagnostic path when
+`GBRAIN_DREAM_DIR`,
 `--brain-dir`, or gbrain `sync.repo_path` identifies the brain repo; gbrain
 dry-run may still spend cheap verdict-model tokens. A recurring scheduler
 should use `codex-dream-cycle -- --limit 20 --brain-dir /path/to/gbrain-brain-repo`
 only after readiness passes.
+
+If a dry-run selects zero transcripts, inspect the cycle report:
+
+- weak collector material means the adapter did not capture enough
+  problem/action/result/outcome structure;
+- conservative gbrain verdict means the material is present, but gbrain still
+  did not judge it worth synthesis.
 
 The old `codex-ingest` command is deprecated because it directly registered a
 gbrain source and embedded Codex sessions. That bypassed gbrain's

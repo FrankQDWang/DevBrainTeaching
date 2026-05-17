@@ -1,6 +1,6 @@
 import { describe, expect, it } from "bun:test";
 
-import { boundText, redactLocalPaths, redactText } from "../src/redaction.js";
+import { boundText, redactAndBoundEngineeringText, redactLocalPaths, redactText } from "../src/redaction.js";
 
 describe("redaction", () => {
   it("redacts common secrets", () => {
@@ -55,5 +55,16 @@ describe("redaction", () => {
     expect(result.text).toBe("open $HOME/Agents/DevBrainTeaching/src/index.ts");
     expect(result.count).toBe(1);
     expect(result.text).not.toContain(home);
+  });
+
+  it("redacts and bounds engineering text with real counters", () => {
+    const home = process.env.HOME ?? "/tmp/home";
+    const result = redactAndBoundEngineeringText(`${home}/repo OPENAI_API_KEY=sk-${"a".repeat(40)} ${"x".repeat(2000)}`, 200);
+
+    expect(result.text).toContain("$HOME/repo");
+    expect(result.text).toContain("[REDACTED_SECRET]");
+    expect(result.text).toContain("[TRUNCATED]");
+    expect(result.redacted_count).toBeGreaterThanOrEqual(2);
+    expect(result.truncated_count).toBe(1);
   });
 });

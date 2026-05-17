@@ -28,6 +28,12 @@ export interface BoundTextResult {
   truncated: boolean;
 }
 
+export interface RedactedBoundText {
+  text: string;
+  redacted_count: number;
+  truncated_count: number;
+}
+
 export function redactText(value: string): RedactionResult {
   let text = value;
   let count = 0;
@@ -59,4 +65,14 @@ export function redactLocalPaths(value: string, home = process.env.HOME): Redact
 export function boundText(value: string, maxChars: number): BoundTextResult {
   if (value.length <= maxChars) return { text: value, truncated: false };
   return { text: `${value.slice(0, maxChars)}\n[TRUNCATED]`, truncated: true };
+}
+
+export function redactAndBoundEngineeringText(input: string, maxChars: number): RedactedBoundText {
+  const redacted = redactLocalPaths(input);
+  const bounded = boundText(redacted.text.replace(/\n{3,}/g, "\n\n").trim(), maxChars);
+  return {
+    text: bounded.text,
+    redacted_count: redacted.count,
+    truncated_count: bounded.truncated ? 1 : 0,
+  };
 }

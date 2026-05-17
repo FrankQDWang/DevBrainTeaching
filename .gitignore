@@ -2,6 +2,7 @@
 .devbrain-teaching/cache/
 .devbrain-teaching/gbrain-sources/
 .devbrain-teaching/dream-corpus/
+.devbrain-teaching/debug/
 .devbrain-teaching/state/
 .devbrain-teaching/postgres-data/
 .devbrain-teaching/models/

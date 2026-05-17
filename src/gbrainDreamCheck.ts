@@ -1,4 +1,4 @@
-import { existsSync, statSync } from "node:fs";
+import { existsSync, readdirSync, statSync } from "node:fs";
 import { resolve } from "node:path";
 
 import { createGbrainClient, runGbrain, type GbrainRunner } from "./gbrainClient.js";
@@ -45,7 +45,7 @@ function parseConfigShowValue(output: string, key: string): string | null {
 }
 
 export function checkGbrainDreamReadiness(options: GbrainDreamCheckOptions = {}): GbrainDreamReadinessReport {
-  const corpusDir = resolve(options.corpusDir ?? ".devbrain-teaching/dream-corpus/codex-sessions");
+  const corpusDir = resolve(options.corpusDir ?? ".devbrain-teaching/dream-corpus/codex-engineering");
   const brainDir = options.brainDir ? resolve(options.brainDir) : null;
   const brainDirExists = brainDir ? existsSync(brainDir) : null;
   const brainDirIsDirectory = brainDir && brainDirExists ? statSync(brainDir).isDirectory() : brainDirExists === null ? null : false;
@@ -108,6 +108,9 @@ export function checkGbrainDreamReadiness(options: GbrainDreamCheckOptions = {})
   if (!synthDir) missing_config.push("dream.synthesize.session_corpus_dir");
   if (synthDir && resolve(synthDir) !== corpusDir) {
     mismatched_config.push({ key: "dream.synthesize.session_corpus_dir", expected: corpusDir, actual: synthDir });
+    if (synthDir.includes(".devbrain-teaching/dream-corpus/codex-sessions")) {
+      warnings.push("dream.synthesize.session_corpus_dir still points at the old raw codex-sessions corpus.");
+    }
   }
   if (enabled !== "true") {
     if (!enabled) missing_config.push("dream.synthesize.enabled");
@@ -127,6 +130,13 @@ export function checkGbrainDreamReadiness(options: GbrainDreamCheckOptions = {})
   }
   if (!config.models_dream_synthesize_verdict && !config.models_tier_utility && !config.models_default) {
     warnings.push("No explicit verdict model configured; gbrain will use its utility-tier fallback.");
+  }
+  const oldRawCorpusDir = resolve(".devbrain-teaching/dream-corpus/codex-sessions");
+  if (oldRawCorpusDir !== corpusDir && existsSync(oldRawCorpusDir) && readdirSync(oldRawCorpusDir).length > 0) {
+    warnings.push("Old raw codex-sessions dream corpus exists and is not the configured engineering corpus.");
+  }
+  if (existsSync(corpusDir) && readdirSync(corpusDir).some((name) => name.endsWith(".envelope.txt"))) {
+    warnings.push("Configured engineering corpus contains raw envelope files.");
   }
 
   let stale_sources: GbrainDreamReadinessReport["stale_sources"] = [];

@@ -121,8 +121,10 @@ if (command === "doctor") {
     const args = parseCodexCollectArgs(process.argv.slice(3));
     const result = collectCodexSessions({ limit: args.limit });
     console.log(`Codex sessions considered: ${result.considered}`);
-    console.log(`Transcripts written: ${result.written}`);
-    console.log(`Corpus: ${result.corpusDir}`);
+    console.log(`Engineering episodes written: ${result.engineeringEpisodeFilesWritten}`);
+    console.log(`Raw envelope debug files written: ${result.rawEnvelopeFilesWritten}`);
+    console.log(`Engineering corpus: ${result.engineeringCorpusDir}`);
+    console.log(`Raw envelope debug dir: ${result.rawEnvelopeDir}`);
     console.log(`Run artifacts: ${result.runDir}`);
   } catch (error) {
     console.error(error instanceof Error ? error.message : String(error));

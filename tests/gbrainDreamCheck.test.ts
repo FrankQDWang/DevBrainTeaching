@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import { mkdirSync, rmSync } from "node:fs";
+import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -15,6 +15,25 @@ function fail(args: string[], stderr = "missing"): CommandResult {
 }
 
 describe("gbrain dream readiness", () => {
+  it("defaults readiness to the engineering dream corpus and warns on stale raw corpus config", () => {
+    const runner: GbrainRunner = (args) => {
+      if (args[0] === "--version") return ok(args, "gbrain 0.33.1.0\n");
+      if (args.join(" ") === "config show") return ok(args, "");
+      if (args.join(" ") === "sources list --json") return ok(args, JSON.stringify({ sources: [] }));
+      if (args[0] === "config" && args[1] === "get" && args[2] === "dream.synthesize.session_corpus_dir") {
+        return ok(args, ".devbrain-teaching/dream-corpus/codex-sessions\n");
+      }
+      if (args[0] === "config" && args[1] === "get" && args[2] === "dream.synthesize.enabled") return ok(args, "true\n");
+      if (args[0] === "config" && args[1] === "get") return fail(args, "Config key not found");
+      return ok(args);
+    };
+
+    const report = checkGbrainDreamReadiness({ runner });
+
+    expect(report.corpus_dir).toContain(".devbrain-teaching/dream-corpus/codex-engineering");
+    expect(report.warnings).toContain("dream.synthesize.session_corpus_dir still points at the old raw codex-sessions corpus.");
+  });
+
   it("reports missing dream config, model route, embedding config, and stale direct source", () => {
     const runner: GbrainRunner = (args) => {
       if (args[0] === "--version") return ok(args, "gbrain 0.33.1.0\n");
@@ -89,5 +108,25 @@ describe("gbrain dream readiness", () => {
     const report = checkGbrainDreamReadiness({ corpusDir: "/new-corpus", runner });
     expect(report.brain_dir_ready).toBe(false);
     expect(report.warnings).toContain(`Configured sync.repo_path is not usable: ${missingPath}`);
+  });
+
+  it("warns when the configured engineering corpus contains raw envelope files", () => {
+    const corpusDir = join(tmpdir(), `engineering-corpus-${Date.now()}`);
+    mkdirSync(corpusDir, { recursive: true });
+    writeFileSync(join(corpusDir, "bad.envelope.txt"), "raw envelope");
+    const runner: GbrainRunner = (args) => {
+      if (args[0] === "--version") return ok(args, "gbrain 0.33.1.0\n");
+      if (args.join(" ") === "config show") return ok(args, "");
+      if (args.join(" ") === "sources list --json") return ok(args, JSON.stringify({ sources: [] }));
+      if (args[0] === "config" && args[1] === "get" && args[2] === "dream.synthesize.session_corpus_dir") return ok(args, `${corpusDir}\n`);
+      if (args[0] === "config" && args[1] === "get" && args[2] === "dream.synthesize.enabled") return ok(args, "true\n");
+      if (args[0] === "config" && args[1] === "get") return fail(args, "Config key not found");
+      return ok(args);
+    };
+
+    const report = checkGbrainDreamReadiness({ corpusDir, runner });
+
+    expect(report.warnings).toContain("Configured engineering corpus contains raw envelope files.");
+    rmSync(corpusDir, { recursive: true, force: true });
   });
 });

@@ -146,6 +146,139 @@ describe("codex session parser", () => {
     expect(parsed.some((session) => session.userGoals.length > 0)).toBe(true);
 
     const duplicateNeedle = "large duplicated user message unique marker";
-    expect(serialized.indexOf(duplicateNeedle)).toBe(serialized.lastIndexOf(duplicateNeedle));
+    const userGoals = parsed.flatMap((session) => session.userGoals);
+    expect(userGoals.filter((goal) => goal.includes(duplicateNeedle))).toHaveLength(1);
+  });
+
+  it("extracts response_item command arrays, JSON-wrapped outputs, and ordered engineering events", () => {
+    const content = [
+      JSON.stringify({
+        timestamp: "2026-05-16T01:00:00.000Z",
+        type: "response_item",
+        payload: {
+          type: "function_call",
+          name: "shell",
+          call_id: "call-1",
+          arguments: JSON.stringify({
+            command: ["bash", "-lc", "printf '64 pass\\n0 fail\\n'"],
+            workdir: "/repo",
+          }),
+        },
+      }),
+      JSON.stringify({
+        timestamp: "2026-05-16T01:00:01.000Z",
+        type: "response_item",
+        payload: {
+          type: "function_call_output",
+          call_id: "call-1",
+          output: JSON.stringify({
+            output: "64 pass\\n0 fail\\n",
+            metadata: { exit_code: 0, duration_seconds: 0.1 },
+          }),
+        },
+      }),
+    ].join("\n");
+
+    const session = parseCodexSessionJsonl({ sourcePath: "/tmp/session.jsonl", content });
+
+    expect(session.commands.join("\n")).toContain("bash -lc");
+    expect(session.commandResults.join("\n")).toContain("64 pass");
+    expect(session.commandResults.join("\n")).toContain("exit_code");
+    expect(session.engineeringEvents.map((event) => event.kind)).toEqual(["engineering_action", "observed_result"]);
+    expect(session.engineeringEvents.map((event) => event.ordinal)).toEqual([1, 2]);
+    expect(session.engineeringEvents[0]).toMatchObject({
+      source_channel: "commands",
+      call_id: "call-1",
+      tool_name: "shell",
+      raw_payload_type: "function_call",
+      timestamp: "2026-05-16T01:00:00.000Z",
+    });
+    expect(session.engineeringEvents[1]).toMatchObject({
+      source_channel: "commandResults",
+      call_id: "call-1",
+      raw_payload_type: "function_call_output",
+      timestamp: "2026-05-16T01:00:01.000Z",
+    });
+  });
+
+  it("uses structural final markers and event_msg user messages without keyword inference", () => {
+    const content = [
+      JSON.stringify({
+        timestamp: "2026-05-16T01:00:00.000Z",
+        type: "event_msg",
+        payload: {
+          type: "user_message",
+          message: "Build engineering experience episodes from Codex sessions.",
+        },
+      }),
+      JSON.stringify({
+        timestamp: "2026-05-16T01:00:01.000Z",
+        type: "response_item",
+        payload: {
+          type: "message",
+          role: "assistant",
+          content: [{ text: "implemented keyword but no final marker" }],
+        },
+      }),
+      JSON.stringify({
+        timestamp: "2026-05-16T01:00:02.000Z",
+        type: "response_item",
+        payload: {
+          type: "message",
+          role: "assistant",
+          channel: "final",
+          content: [{ output_text: "Implemented with structural final marker." }],
+        },
+      }),
+    ].join("\n");
+
+    const session = parseCodexSessionJsonl({ sourcePath: "/tmp/session.jsonl", content });
+
+    expect(session.userGoals.join("\n")).toContain("engineering experience");
+    expect(session.assistantNotes.join("\n")).toContain("implemented keyword but no final marker");
+    expect(session.outcomes.join("\n")).toContain("structural final marker");
+    expect(session.outcomes.join("\n")).not.toContain("keyword but no final marker");
+    expect(session.engineeringEvents.map((event) => event.kind)).toEqual(["goal", "assistant_observation", "final_outcome"]);
+  });
+
+  it("handles content object and stdout/stderr fallback while dropping encrypted reasoning", () => {
+    const huge = "x".repeat(3_000);
+    const content = [
+      "not-json",
+      JSON.stringify({
+        timestamp: "2026-05-16T01:00:00.000Z",
+        type: "response_item",
+        payload: { type: "reasoning", encrypted_content: "secret-reasoning" },
+      }),
+      JSON.stringify({
+        timestamp: "2026-05-16T01:00:01.000Z",
+        type: "response_item",
+        payload: {
+          type: "message",
+          role: "user",
+          content: { text: "Investigate content object." },
+        },
+      }),
+      JSON.stringify({
+        timestamp: "2026-05-16T01:00:02.000Z",
+        type: "response_item",
+        payload: {
+          type: "function_call_output",
+          call_id: "call-2",
+          stdout: `stdout line\n${huge}`,
+          stderr: "stderr line",
+        },
+      }),
+    ].join("\n");
+
+    const session = parseCodexSessionJsonl({ sourcePath: "/tmp/session.jsonl", content });
+    const serialized = JSON.stringify(session);
+
+    expect(session.userGoals.join("\n")).toContain("Investigate content object");
+    expect(session.commandResults.join("\n")).toContain("stdout line");
+    expect(session.commandResults.join("\n")).toContain("stderr line");
+    expect(session.dropped.malformedLines).toBe(1);
+    expect(session.dropped.textFieldsTruncated).toBeGreaterThan(0);
+    expect(serialized).not.toContain("secret-reasoning");
   });
 });

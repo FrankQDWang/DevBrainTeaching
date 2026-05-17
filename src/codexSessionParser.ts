@@ -39,7 +39,27 @@ export interface ParsedCodexSession {
   commandResults: string[];
   filePaths: string[];
   outcomes: string[];
+  engineeringEvents: ParsedCodexEvidenceEvent[];
   dropped: CodexParserDropStats;
+}
+
+export interface ParsedCodexEvidenceEvent {
+  ordinal: number;
+  timestamp?: string;
+  source_channel: string;
+  kind:
+    | "goal"
+    | "context"
+    | "source_event"
+    | "engineering_action"
+    | "observed_result"
+    | "assistant_observation"
+    | "final_outcome"
+    | "referenced_file";
+  text: string;
+  call_id?: string;
+  tool_name?: string;
+  raw_payload_type?: string;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -59,29 +79,44 @@ function boundedText(value: string, dropped: CodexParserDropStats): string {
   return result.text;
 }
 
+function textFromRecord(value: Record<string, unknown>): string | undefined {
+  for (const key of ["text", "input_text", "output_text", "content", "message"]) {
+    const text = value[key];
+    if (typeof text === "string") return text;
+  }
+  return undefined;
+}
+
 function textFromContent(content: unknown, dropped: CodexParserDropStats): string[] {
   if (typeof content === "string") return [boundedText(content, dropped)].filter(Boolean);
-  if (!Array.isArray(content)) return [];
-
-  const texts: string[] = [];
-  for (const item of content) {
-    if (!isRecord(item)) {
-      dropped.lowSignalEvents += 1;
-      continue;
+  if (Array.isArray(content)) {
+    const texts: string[] = [];
+    for (const item of content) {
+      if (!isRecord(item)) {
+        dropped.lowSignalEvents += 1;
+        continue;
+      }
+      if ("encrypted_content" in item) {
+        dropped.lowSignalEvents += 1;
+        continue;
+      }
+      const text = textFromRecord(item);
+      if (typeof text === "string") {
+        const bounded = boundedText(text, dropped);
+        if (bounded) texts.push(bounded);
+      } else {
+        dropped.lowSignalEvents += 1;
+      }
     }
-    if ("encrypted_content" in item) {
-      dropped.lowSignalEvents += 1;
-      continue;
-    }
-    const text = item.text ?? item.input_text ?? item.output_text;
-    if (typeof text === "string") {
-      const bounded = boundedText(text, dropped);
-      if (bounded) texts.push(bounded);
-    } else {
-      dropped.lowSignalEvents += 1;
-    }
+    return texts;
   }
-  return texts;
+  if (isRecord(content)) {
+    const text = textFromRecord(content);
+    if (text) return [boundedText(text, dropped)].filter(Boolean);
+    dropped.lowSignalEvents += 1;
+    return [];
+  }
+  return [];
 }
 
 function extractCommand(payload: Record<string, unknown>, dropped: CodexParserDropStats): string | undefined {
@@ -91,6 +126,12 @@ function extractCommand(payload: Record<string, unknown>, dropped: CodexParserDr
     if (isRecord(args) && typeof args.cmd === "string") {
       return boundedText(args.cmd, dropped);
     }
+    if (isRecord(args) && typeof args.command === "string") {
+      return boundedText(args.command, dropped);
+    }
+    if (isRecord(args) && Array.isArray(args.command) && args.command.every((item) => typeof item === "string")) {
+      return boundedText(args.command.join(" "), dropped);
+    }
   } catch {
     dropped.lowSignalEvents += 1;
   }
@@ -98,13 +139,46 @@ function extractCommand(payload: Record<string, unknown>, dropped: CodexParserDr
 }
 
 function extractCommandOutput(payload: Record<string, unknown>, dropped: CodexParserDropStats): string | undefined {
-  const raw = typeof payload.output === "string" ? payload.output : undefined;
+  const outputPart = (label: string, value: string): string => {
+    const bounded = boundText(value.trim(), 1_000);
+    if (bounded.truncated) dropped.textFieldsTruncated += 1;
+    return `${label}: ${bounded.text}`;
+  };
+  let raw = typeof payload.output === "string" ? payload.output : undefined;
+  if (raw) {
+    try {
+      const parsed = JSON.parse(raw);
+      if (isRecord(parsed)) {
+        const parts: string[] = [];
+        for (const key of ["output", "stdout", "stderr", "content"]) {
+          const value = parsed[key];
+          if (typeof value === "string") parts.push(outputPart(key, value));
+        }
+        if (isRecord(parsed.metadata)) {
+          const metadata = JSON.stringify(parsed.metadata);
+          if (metadata !== "{}") parts.push(outputPart("metadata", metadata));
+        }
+        if (parts.length > 0) raw = parts.join("\n");
+      }
+    } catch {
+      raw = outputPart("output", raw);
+    }
+  } else {
+    const parts: string[] = [];
+    for (const key of ["stdout", "stderr", "content"]) {
+      const value = payload[key];
+      if (typeof value === "string") parts.push(outputPart(key, value));
+      else if (Array.isArray(value)) parts.push(...textFromContent(value, dropped).map((text) => outputPart(key, text)));
+      else if (isRecord(value)) parts.push(...textFromContent(value, dropped).map((text) => outputPart(key, text)));
+    }
+    raw = parts.length > 0 ? parts.join("\n") : undefined;
+  }
   if (!raw) return undefined;
   const bounded = boundedText(raw, dropped);
-  const firstLines = bounded.split(/\r?\n/).slice(0, 3).join("\n");
-  if (firstLines.length <= 1_000) return firstLines;
+  const firstLines = bounded.split(/\r?\n/).slice(0, 8).join("\n");
+  if (firstLines.length <= 2_000) return firstLines;
   dropped.textFieldsTruncated += 1;
-  return `${firstLines.slice(0, 1_000)}\n[TRUNCATED]`;
+  return `${firstLines.slice(0, 2_000)}\n[TRUNCATED]`;
 }
 
 function extractPaths(text: string): string[] {
@@ -183,7 +257,33 @@ export function parseCodexSessionJsonl(input: ParseCodexSessionInput): ParsedCod
     commandResults: [],
     filePaths: [],
     outcomes: [],
+    engineeringEvents: [],
     dropped,
+  };
+  let engineeringOrdinal = 0;
+
+  const addEngineeringEvent = (
+    kind: ParsedCodexEvidenceEvent["kind"],
+    source_channel: string,
+    text: string,
+    event: Record<string, unknown>,
+    payload: Record<string, unknown>,
+  ): void => {
+    engineeringOrdinal += 1;
+    const timestamp = typeof event.timestamp === "string" ? event.timestamp : undefined;
+    const callId = typeof payload.call_id === "string" ? payload.call_id : undefined;
+    const toolName = typeof payload.name === "string" ? payload.name : undefined;
+    const rawPayloadType = typeof payload.type === "string" ? payload.type : typeof event.type === "string" ? event.type : undefined;
+    session.engineeringEvents.push({
+      ordinal: engineeringOrdinal,
+      source_channel,
+      kind,
+      text,
+      ...(timestamp ? { timestamp } : {}),
+      ...(callId ? { call_id: callId } : {}),
+      ...(toolName ? { tool_name: toolName } : {}),
+      ...(rawPayloadType ? { raw_payload_type: rawPayloadType } : {}),
+    });
   };
 
   for (const rawLine of input.content.split(/\r?\n/)) {
@@ -216,6 +316,7 @@ export function parseCodexSessionJsonl(input: ParseCodexSessionInput): ParsedCod
       if (typeof payload.originator === "string") session.originator = boundedText(payload.originator, dropped);
       if (typeof payload.timestamp === "string") session.startedAt = payload.timestamp;
       if (session.cwd) pushBounded(session.projectContext, [`CWD: ${session.cwd}`], 3, dropped);
+      if (session.cwd) addEngineeringEvent("context", "projectContext", `CWD: ${session.cwd}`, event, payload);
       continue;
     }
 
@@ -236,20 +337,31 @@ export function parseCodexSessionJsonl(input: ParseCodexSessionInput): ParsedCod
       }
       if (role === "user") {
         pushMeaningfulText(session.userGoals, texts, maxUserGoals, dropped);
+        for (const text of texts) {
+          if (!isLowSignalText(text)) addEngineeringEvent("goal", "userGoals", text, event, payload);
+        }
       } else if (role === "assistant") {
-        if (payload.phase === "final" || payload.phase === "final_answer") {
+        if (payload.phase === "final" || payload.phase === "final_answer" || payload.channel === "final" || payload.status === "completed") {
           pushMeaningfulText(session.outcomes, texts, maxOutcomes, dropped);
-        } else if (payload.phase === "commentary") {
-          pushMeaningfulText(session.assistantNotes, texts, maxAssistantNotes, dropped);
-        } else {
+          for (const text of texts) {
+            if (!isLowSignalText(text)) addEngineeringEvent("final_outcome", "outcomes", text, event, payload);
+          }
+        } else if (payload.phase === "analysis") {
           dropped.lowSignalEvents += 1;
+        } else {
+          pushMeaningfulText(session.assistantNotes, texts, maxAssistantNotes, dropped);
+          for (const text of texts) {
+            if (!isLowSignalText(text)) addEngineeringEvent("assistant_observation", "assistantNotes", text, event, payload);
+          }
         }
       }
       continue;
     }
 
     if (type === "user_message" && typeof payload.message === "string") {
-      pushMeaningfulText(session.userGoals, [boundedText(payload.message, dropped)], maxUserGoals, dropped);
+      const message = boundedText(payload.message, dropped);
+      pushMeaningfulText(session.userGoals, [message], maxUserGoals, dropped);
+      if (!isLowSignalText(message)) addEngineeringEvent("goal", "userGoals", message, event, payload);
       continue;
     }
 
@@ -257,8 +369,10 @@ export function parseCodexSessionJsonl(input: ParseCodexSessionInput): ParsedCod
       const message = boundedText(payload.message, dropped);
       if (payload.phase === "final" || payload.phase === "final_answer") {
         pushMeaningfulText(session.outcomes, [message], maxOutcomes, dropped);
+        addEngineeringEvent("final_outcome", "outcomes", message, event, payload);
       } else if (payload.phase === "commentary") {
         pushMeaningfulText(session.assistantNotes, [message], maxAssistantNotes, dropped);
+        addEngineeringEvent("assistant_observation", "assistantNotes", message, event, payload);
       } else {
         dropped.lowSignalEvents += 1;
       }
@@ -272,6 +386,7 @@ export function parseCodexSessionJsonl(input: ParseCodexSessionInput): ParsedCod
         pushBounded(session.commands, [command], maxCommandResults, dropped);
         pushBounded(session.keyEvents, [`Called ${name}: ${command}`], maxAssistantNotes, dropped);
         pushBounded(session.filePaths, extractPaths(command), maxFilePaths, dropped);
+        addEngineeringEvent("engineering_action", "commands", command, event, payload);
       }
       continue;
     }
@@ -281,6 +396,7 @@ export function parseCodexSessionJsonl(input: ParseCodexSessionInput): ParsedCod
       if (output) {
         pushBounded(session.commandResults, [output], maxCommandResults, dropped);
         pushBounded(session.filePaths, extractPaths(output), maxFilePaths, dropped);
+        addEngineeringEvent("observed_result", "commandResults", output, event, payload);
       }
       continue;
     }

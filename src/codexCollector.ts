@@ -1,5 +1,5 @@
-import { randomUUID } from "node:crypto";
-import { closeSync, existsSync, mkdirSync, openSync, readFileSync, readSync, readdirSync, renameSync, statSync, writeFileSync, chmodSync } from "node:fs";
+import { createHash } from "node:crypto";
+import { closeSync, existsSync, openSync, readFileSync, readSync, readdirSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join, resolve, sep } from "node:path";
 import { spawnSync } from "node:child_process";
@@ -8,6 +8,16 @@ import { parseLimit } from "./cliArgs.js";
 import { codexSessionParserVersion, parseCodexSessionJsonl, type ParsedCodexSession } from "./codexSessionParser.js";
 import { dreamRendererVersion, dreamTranscriptFilename } from "./codexDreamTranscriptWriter.js";
 import {
+  buildCodexEngineeringEpisode,
+  codexEngineeringAdapterVersion,
+  engineeringExperienceEpisodeVersion,
+  type EngineeringEpisodeQuality,
+} from "./engineeringExperienceEpisode.js";
+import {
+  engineeringEpisodeRendererVersion,
+  renderEngineeringExperienceEpisode,
+} from "./engineeringExperienceEpisodeWriter.js";
+import {
   buildCodexExperienceEnvelope,
   codexSessionAdapterVersion,
   experienceEnvelopeVersion,
@@ -15,11 +25,14 @@ import {
   type ExperienceEnvelopeQuality,
 } from "./experienceEnvelope.js";
 import { renderExperienceEnvelope } from "./experienceEnvelopeWriter.js";
+import { ensurePrivateDir, writePrivateFileAtomic } from "./privateArtifacts.js";
 import { redactionVersion } from "./redaction.js";
 
 export interface CollectCodexSessionsOptions {
   sessionsDir?: string;
   corpusDir?: string;
+  engineeringCorpusDir?: string;
+  rawEnvelopeDir?: string;
   statePath?: string;
   runRoot?: string;
   limit?: number;
@@ -29,19 +42,31 @@ export interface CollectCodexSessionsOptions {
 
 export interface CollectCodexSessionsResult {
   corpusDir: string;
+  engineeringCorpusDir: string;
+  rawEnvelopeDir: string;
   runDir: string;
   considered: number;
   written: number;
   unchanged: number;
   skipped: number;
+  engineeringEpisodeFilesWritten: number;
+  rawEnvelopeFilesWritten: number;
+  engineeringEvidenceItems: number;
+  engineeringLikelyReviewable: number;
+  engineeringWithProblem: number;
+  engineeringWithAction: number;
+  engineeringWithResult: number;
+  engineeringWithOutcome: number;
+  engineeringRedacted: number;
+  engineeringTruncated: number;
+  engineeringMalformed: number;
+  engineeringLowSignal: number;
 }
 
 interface CollectorState {
   schema_version: 1;
   parser_version: string;
-  renderer_version: string;
   redaction_version: string;
-  envelope_version: string;
   updated_at: string;
   counters: {
     considered: number;
@@ -62,41 +87,42 @@ interface CollectorState {
     envelope_truncated_count: number;
     envelope_malformed_count: number;
     envelope_low_signal_count: number;
+    engineeringEpisodeFilesWritten: number;
+    rawEnvelopeFilesWritten: number;
+    engineeringEvidenceItems: number;
+    engineeringLikelyReviewable: number;
+    engineeringWithProblem: number;
+    engineeringWithAction: number;
+    engineeringWithResult: number;
+    engineeringWithOutcome: number;
+    engineeringRedacted: number;
+    engineeringTruncated: number;
+    engineeringMalformed: number;
+    engineeringLowSignal: number;
   };
   sessions: Record<
     string,
     {
       session_id: string;
       source_path: string;
-      transcript_path: string;
       source_sha256: string;
-      fingerprint: string;
       started_at?: string;
       updated_at: string;
+      transcript_path?: string;
+      fingerprint?: string;
+      raw_envelope?: {
+        transcript_path: string;
+        fingerprint: string;
+      };
+      engineering_episode?: {
+        transcript_path: string;
+        fingerprint: string;
+      };
     }
   >;
 }
 
-function ensurePrivateDir(path: string): void {
-  mkdirSync(path, { recursive: true, mode: 0o700 });
-  try {
-    chmodSync(path, 0o700);
-  } catch {
-    // Some filesystems ignore chmod; tests run where chmod is supported.
-  }
-}
-
-function writePrivateFileAtomic(path: string, content: string): void {
-  ensurePrivateDir(dirname(path));
-  const tmpPath = `${path}.tmp-${process.pid}-${randomUUID()}`;
-  writeFileSync(tmpPath, content, { mode: 0o600 });
-  try {
-    chmodSync(tmpPath, 0o600);
-  } catch {
-    // Best effort on platforms without POSIX chmod support.
-  }
-  renameSync(tmpPath, path);
-}
+type CollectorStateSession = CollectorState["sessions"][string];
 
 function defaultIsPathIgnored(path: string): boolean {
   const result = spawnSync("git", ["check-ignore", "-q", "--no-index", "--", path], {
@@ -177,15 +203,62 @@ function readState(path: string): CollectorState | undefined {
   }
 }
 
-function fingerprint(session: ParsedCodexSession): string {
-  return [
-    session.sourceSha256,
-    codexSessionParserVersion,
-    dreamRendererVersion,
-    redactionVersion,
-    codexSessionAdapterVersion,
-    experienceEnvelopeVersion,
-  ].join(":");
+function migrateLegacySessionState(session: CollectorStateSession): CollectorStateSession {
+  const { transcript_path: transcriptPath, fingerprint, ...rest } = session;
+  if (!transcriptPath || !fingerprint || rest.raw_envelope) return rest;
+  return {
+    ...rest,
+    raw_envelope: {
+      transcript_path: transcriptPath,
+      fingerprint,
+    },
+  };
+}
+
+function migrateLegacyStateSessions(previous: CollectorState | undefined): CollectorState["sessions"] {
+  const migrated: CollectorState["sessions"] = {};
+  for (const [key, session] of Object.entries(previous?.sessions ?? {})) {
+    migrated[key] = migrateLegacySessionState(session);
+  }
+  return migrated;
+}
+
+function sha256Hex(value: string): string {
+  return createHash("sha256").update(value).digest("hex");
+}
+
+function artifactFingerprint(parts: Record<string, string>): string {
+  return sha256Hex(JSON.stringify(Object.keys(parts).sort().map((key) => [key, parts[key]])));
+}
+
+function rawEnvelopeFingerprint(session: ParsedCodexSession): string {
+  return artifactFingerprint({
+    source_sha256: session.sourceSha256,
+    parser_version: codexSessionParserVersion,
+    renderer_version: dreamRendererVersion,
+    redaction_version: redactionVersion,
+    adapter_version: codexSessionAdapterVersion,
+    envelope_version: experienceEnvelopeVersion,
+  });
+}
+
+function engineeringFingerprint(session: ParsedCodexSession): string {
+  return artifactFingerprint({
+    source_sha256: session.sourceSha256,
+    parser_version: codexSessionParserVersion,
+    renderer_version: engineeringEpisodeRendererVersion,
+    redaction_version: redactionVersion,
+    adapter_version: codexEngineeringAdapterVersion,
+    episode_version: engineeringExperienceEpisodeVersion,
+  });
+}
+
+function engineeringTranscriptFilename(session: ParsedCodexSession): string {
+  return dreamTranscriptFilename(session).replace(/\.txt$/, ".engineering.txt");
+}
+
+function rawEnvelopeTranscriptFilename(session: ParsedCodexSession): string {
+  return dreamTranscriptFilename(session).replace(/\.txt$/, ".envelope.txt");
 }
 
 function stateSessionKey(session: ParsedCodexSession): string {
@@ -226,6 +299,18 @@ function renderReport(state: CollectorState): string {
     `- Envelope truncated count: ${state.counters.envelope_truncated_count}`,
     `- Envelope malformed count: ${state.counters.envelope_malformed_count}`,
     `- Envelope low-signal count: ${state.counters.envelope_low_signal_count}`,
+    `- Engineering episode files written: ${state.counters.engineeringEpisodeFilesWritten}`,
+    `- Engineering sessions with problem: ${state.counters.engineeringWithProblem}`,
+    `- Engineering sessions with action: ${state.counters.engineeringWithAction}`,
+    `- Engineering sessions with result: ${state.counters.engineeringWithResult}`,
+    `- Engineering sessions with outcome: ${state.counters.engineeringWithOutcome}`,
+    `- Engineering likely reviewable: ${state.counters.engineeringLikelyReviewable}`,
+    `- Engineering evidence items: ${state.counters.engineeringEvidenceItems}`,
+    `- Engineering redacted count: ${state.counters.engineeringRedacted}`,
+    `- Engineering truncated count: ${state.counters.engineeringTruncated}`,
+    `- Engineering malformed count: ${state.counters.engineeringMalformed}`,
+    `- Engineering low-signal count: ${state.counters.engineeringLowSignal}`,
+    `- Raw envelope debug files written: ${state.counters.rawEnvelopeFilesWritten}`,
     "",
   ].join("\n");
 }
@@ -233,7 +318,9 @@ function renderReport(state: CollectorState): string {
 export function collectCodexSessions(options: CollectCodexSessionsOptions = {}): CollectCodexSessionsResult {
   const limit = parseLimit(options.limit === undefined ? undefined : String(options.limit));
   const sessionsDir = resolve(options.sessionsDir ?? join(homedir(), ".codex/sessions"));
-  const corpusDir = resolve(options.corpusDir ?? ".devbrain-teaching/dream-corpus/codex-sessions");
+  const engineeringCorpusDir = resolve(options.engineeringCorpusDir ?? options.corpusDir ?? ".devbrain-teaching/dream-corpus/codex-engineering");
+  const rawEnvelopeDir = resolve(options.rawEnvelopeDir ?? ".devbrain-teaching/debug/envelopes/codex-sessions");
+  const corpusDir = engineeringCorpusDir;
   const statePath = resolve(options.statePath ?? ".devbrain-teaching/state/codex-sessions.json");
   const runRoot = resolve(options.runRoot ?? ".devbrain-teaching/runs");
   const now = options.now?.() ?? new Date();
@@ -248,6 +335,8 @@ export function collectCodexSessions(options: CollectCodexSessionsOptions = {}):
   ensureIgnored(
     [
       join(corpusDir, "example.txt"),
+      join(engineeringCorpusDir, "example.engineering.txt"),
+      join(rawEnvelopeDir, "example.envelope.txt"),
       statePath,
       join(runDir, "manifest.json"),
     ],
@@ -255,11 +344,12 @@ export function collectCodexSessions(options: CollectCodexSessionsOptions = {}):
   );
 
   ensurePrivateDir(corpusDir);
+  ensurePrivateDir(rawEnvelopeDir);
   ensurePrivateDir(dirname(statePath));
   ensurePrivateDir(runDir);
 
   const previous = readState(statePath);
-  const sessions = { ...(previous?.sessions ?? {}) };
+  const sessions = migrateLegacyStateSessions(previous);
   const counters: CollectorState["counters"] = {
     considered: files.length,
     written: 0,
@@ -279,19 +369,37 @@ export function collectCodexSessions(options: CollectCodexSessionsOptions = {}):
     envelope_truncated_count: 0,
     envelope_malformed_count: 0,
     envelope_low_signal_count: 0,
+    engineeringEpisodeFilesWritten: 0,
+    rawEnvelopeFilesWritten: 0,
+    engineeringEvidenceItems: 0,
+    engineeringLikelyReviewable: 0,
+    engineeringWithProblem: 0,
+    engineeringWithAction: 0,
+    engineeringWithResult: 0,
+    engineeringWithOutcome: 0,
+    engineeringRedacted: 0,
+    engineeringTruncated: 0,
+    engineeringMalformed: 0,
+    engineeringLowSignal: 0,
   };
 
   const parsedRecords: Array<{
     session: ParsedCodexSession;
     envelope: ExperienceEvidenceEnvelope;
     quality: ExperienceEnvelopeQuality;
+    engineeringQuality: EngineeringEpisodeQuality;
+    engineeringTranscriptPath: string;
+    rawEnvelopeTranscriptPath: string;
+    engineeringFingerprint: string;
+    rawEnvelopeFingerprint: string;
   }> = [];
   for (const file of files) {
     const content = readFileSync(file, "utf8");
     const session = parseCodexSessionJsonl({ sourcePath: file, content });
     const envelopeResult = buildCodexExperienceEnvelope(session);
+    const engineeringResult = buildCodexEngineeringEpisode(session);
     const envelopeQuality = envelopeResult.quality;
-    parsedRecords.push({ session, envelope: envelopeResult.envelope, quality: envelopeQuality });
+    const engineeringQuality = engineeringResult.quality;
     counters.malformed += session.dropped.malformedLines;
     counters.redacted += session.dropped.secretsRedacted;
     counters.truncated += session.dropped.textFieldsTruncated;
@@ -306,35 +414,69 @@ export function collectCodexSessions(options: CollectCodexSessionsOptions = {}):
     counters.envelope_truncated_count += envelopeQuality.truncated_count;
     counters.envelope_malformed_count += envelopeQuality.malformed_count;
     counters.envelope_low_signal_count += envelopeQuality.low_signal_count;
-    const name = dreamTranscriptFilename(session);
-    const outPath = join(corpusDir, name);
-    assertContained(corpusDir, outPath);
-    const nextFingerprint = fingerprint(session);
+    counters.engineeringEvidenceItems += engineeringQuality.evidence_count;
+    if (engineeringQuality.has_problem) counters.engineeringWithProblem += 1;
+    if (engineeringQuality.has_action) counters.engineeringWithAction += 1;
+    if (engineeringQuality.has_result) counters.engineeringWithResult += 1;
+    if (engineeringQuality.has_outcome) counters.engineeringWithOutcome += 1;
+    if (engineeringQuality.likely_engineering_reviewable) counters.engineeringLikelyReviewable += 1;
+    counters.engineeringRedacted += engineeringQuality.redacted_count;
+    counters.engineeringTruncated += engineeringQuality.truncated_count;
+    counters.engineeringMalformed += engineeringQuality.malformed_count;
+    counters.engineeringLowSignal += engineeringQuality.low_signal_count;
+    const engineeringTranscriptPath = join(engineeringCorpusDir, engineeringTranscriptFilename(session));
+    const rawEnvelopeTranscriptPath = join(rawEnvelopeDir, rawEnvelopeTranscriptFilename(session));
+    assertContained(engineeringCorpusDir, engineeringTranscriptPath);
+    assertContained(rawEnvelopeDir, rawEnvelopeTranscriptPath);
+    const nextEngineeringFingerprint = engineeringFingerprint(session);
+    const nextRawEnvelopeFingerprint = rawEnvelopeFingerprint(session);
     const sessionKey = stateSessionKey(session);
     const previousSession = previous?.sessions[sessionKey];
-    if (previousSession?.fingerprint === nextFingerprint && existsSync(outPath)) {
+    if (previousSession?.engineering_episode?.fingerprint === nextEngineeringFingerprint && existsSync(engineeringTranscriptPath)) {
       counters.unchanged += 1;
     } else {
-      writePrivateFileAtomic(outPath, renderExperienceEnvelope(envelopeResult.envelope));
+      writePrivateFileAtomic(engineeringTranscriptPath, renderEngineeringExperienceEpisode(engineeringResult.episode));
       counters.written += 1;
+      counters.engineeringEpisodeFilesWritten += 1;
+    }
+    if (previousSession?.raw_envelope?.fingerprint === nextRawEnvelopeFingerprint && existsSync(rawEnvelopeTranscriptPath)) {
+      counters.unchanged += 1;
+    } else {
+      writePrivateFileAtomic(rawEnvelopeTranscriptPath, renderExperienceEnvelope(envelopeResult.envelope));
+      counters.written += 1;
+      counters.rawEnvelopeFilesWritten += 1;
     }
     sessions[sessionKey] = {
       session_id: session.sessionId,
       source_path: file,
-      transcript_path: outPath,
       source_sha256: session.sourceSha256,
-      fingerprint: nextFingerprint,
       started_at: session.startedAt,
       updated_at: now.toISOString(),
+      raw_envelope: {
+        transcript_path: rawEnvelopeTranscriptPath,
+        fingerprint: nextRawEnvelopeFingerprint,
+      },
+      engineering_episode: {
+        transcript_path: engineeringTranscriptPath,
+        fingerprint: nextEngineeringFingerprint,
+      },
     };
+    parsedRecords.push({
+      session,
+      envelope: envelopeResult.envelope,
+      quality: envelopeQuality,
+      engineeringQuality,
+      engineeringTranscriptPath,
+      rawEnvelopeTranscriptPath,
+      engineeringFingerprint: nextEngineeringFingerprint,
+      rawEnvelopeFingerprint: nextRawEnvelopeFingerprint,
+    });
   }
 
   const state: CollectorState = {
     schema_version: 1,
     parser_version: codexSessionParserVersion,
-    renderer_version: dreamRendererVersion,
     redaction_version: redactionVersion,
-    envelope_version: experienceEnvelopeVersion,
     updated_at: now.toISOString(),
     counters,
     sessions,
@@ -345,16 +487,29 @@ export function collectCodexSessions(options: CollectCodexSessionsOptions = {}):
     schema_version: 1,
     generated_at: now.toISOString(),
     corpus_dir: corpusDir,
+    engineering_corpus_dir: engineeringCorpusDir,
+    raw_envelope_dir: rawEnvelopeDir,
     state_path: statePath,
-    sessions: parsedRecords.map(({ session, quality }) => ({
+    sessions: parsedRecords.map(({ session, quality, engineeringQuality, engineeringTranscriptPath, rawEnvelopeTranscriptPath, engineeringFingerprint, rawEnvelopeFingerprint }) => ({
       session_id: session.sessionId,
       source_path: session.sourcePath,
-      transcript_path: join(corpusDir, dreamTranscriptFilename(session)),
+      transcript_path: engineeringTranscriptPath,
       source_sha256: session.sourceSha256,
       source_size_bytes: session.sourceSizeBytes,
       started_at: session.startedAt,
       dropped: session.dropped,
       envelope_quality: quality,
+      engineering_episode: {
+        episode_version: engineeringExperienceEpisodeVersion,
+        source_adapter: codexEngineeringAdapterVersion,
+        transcript_path: engineeringTranscriptPath,
+        fingerprint: engineeringFingerprint,
+      },
+      engineering_episode_quality: engineeringQuality,
+      raw_envelope: {
+        transcript_path: rawEnvelopeTranscriptPath,
+        fingerprint: rawEnvelopeFingerprint,
+      },
     })),
     counters,
   };
@@ -363,10 +518,24 @@ export function collectCodexSessions(options: CollectCodexSessionsOptions = {}):
 
   return {
     corpusDir,
+    engineeringCorpusDir,
+    rawEnvelopeDir,
     runDir,
     considered: counters.considered,
     written: counters.written,
     unchanged: counters.unchanged,
     skipped: counters.skipped,
+    engineeringEpisodeFilesWritten: counters.engineeringEpisodeFilesWritten,
+    rawEnvelopeFilesWritten: counters.rawEnvelopeFilesWritten,
+    engineeringEvidenceItems: counters.engineeringEvidenceItems,
+    engineeringLikelyReviewable: counters.engineeringLikelyReviewable,
+    engineeringWithProblem: counters.engineeringWithProblem,
+    engineeringWithAction: counters.engineeringWithAction,
+    engineeringWithResult: counters.engineeringWithResult,
+    engineeringWithOutcome: counters.engineeringWithOutcome,
+    engineeringRedacted: counters.engineeringRedacted,
+    engineeringTruncated: counters.engineeringTruncated,
+    engineeringMalformed: counters.engineeringMalformed,
+    engineeringLowSignal: counters.engineeringLowSignal,
   };
 }

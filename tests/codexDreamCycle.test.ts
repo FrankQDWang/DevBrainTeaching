@@ -1,13 +1,40 @@
 import { describe, expect, it } from "bun:test";
-import { existsSync, mkdtempSync, readFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { runCodexDreamCycle } from "../src/codexDreamCycle.js";
+import type { CollectCodexSessionsResult } from "../src/codexCollector.js";
 import type { GbrainRunner } from "../src/gbrainClient.js";
 
 function brainDir(): string {
   return mkdtempSync(join(tmpdir(), "codex-dream-brain-"));
+}
+
+function collectResult(overrides: Partial<CollectCodexSessionsResult> = {}): CollectCodexSessionsResult {
+  return {
+    corpusDir: "/corpus",
+    engineeringCorpusDir: "/corpus",
+    rawEnvelopeDir: "/raw",
+    runDir: "/run",
+    considered: 0,
+    written: 0,
+    unchanged: 0,
+    skipped: 0,
+    engineeringEpisodeFilesWritten: 0,
+    rawEnvelopeFilesWritten: 0,
+    engineeringEvidenceItems: 0,
+    engineeringLikelyReviewable: 0,
+    engineeringWithProblem: 0,
+    engineeringWithAction: 0,
+    engineeringWithResult: 0,
+    engineeringWithOutcome: 0,
+    engineeringRedacted: 0,
+    engineeringTruncated: 0,
+    engineeringMalformed: 0,
+    engineeringLowSignal: 0,
+    ...overrides,
+  };
 }
 
 describe("codex dream cycle", () => {
@@ -30,13 +57,13 @@ describe("codex dream cycle", () => {
     runCodexDreamCycle({
       dryRun: true,
       brainDir: dir,
-      collect: () => ({ corpusDir: "/corpus", runDir: "/run", considered: 0, written: 0, unchanged: 0, skipped: 0 }),
+      collect: () => collectResult(),
       runner,
       corpusDir: "/corpus",
       writeReport: () => undefined,
     });
 
-    expect(calls.map((args) => args.join(" "))).toContain(`dream --dir ${dir} --dry-run`);
+    expect(calls.map((args) => args.join(" "))).toContain(`dream --dir ${dir} --dry-run --json`);
   });
 
   it("writes default cycle report files into the collector run directory", () => {
@@ -57,7 +84,7 @@ describe("codex dream cycle", () => {
     runCodexDreamCycle({
       dryRun: true,
       brainDir: dir,
-      collect: () => ({ corpusDir: "/corpus", runDir, considered: 0, written: 0, unchanged: 0, skipped: 0 }),
+      collect: () => collectResult({ runDir }),
       runner,
       corpusDir: "/corpus",
     });
@@ -83,13 +110,13 @@ describe("codex dream cycle", () => {
     runCodexDreamCycle({
       dryRun: true,
       brainDir: dir,
-      collect: () => ({ corpusDir: "/corpus", runDir: "/run", considered: 0, written: 0, unchanged: 0, skipped: 0 }),
+      collect: () => collectResult(),
       runner,
       corpusDir: "/corpus",
       writeReport: () => undefined,
     });
 
-    expect(calls.map((args) => args.join(" "))).toContain(`dream --dir ${dir} --dry-run`);
+    expect(calls.map((args) => args.join(" "))).toContain(`dream --dir ${dir} --dry-run --json`);
   });
 
   it("writes a diagnostic report instead of invoking gbrain when no brain dir is available", () => {
@@ -105,7 +132,7 @@ describe("codex dream cycle", () => {
 
     runCodexDreamCycle({
       dryRun: true,
-      collect: () => ({ corpusDir: "/corpus", runDir: "/run", considered: 0, written: 0, unchanged: 0, skipped: 0 }),
+      collect: () => collectResult(),
       runner,
       corpusDir: "/corpus",
       writeReport: (value) => {
@@ -140,7 +167,7 @@ describe("codex dream cycle", () => {
       runCodexDreamCycle({
         dryRun: true,
         brainDir: dir,
-        collect: () => ({ corpusDir: "/corpus", runDir: "/run", considered: 0, written: 0, unchanged: 0, skipped: 0 }),
+        collect: () => collectResult(),
         runner,
         corpusDir: "/corpus",
         writeReport: (value) => {
@@ -178,7 +205,7 @@ describe("codex dream cycle", () => {
       runCodexDreamCycle({
         dryRun: true,
         brainDir: dir,
-        collect: () => ({ corpusDir: "/corpus", runDir: "/run", considered: 0, written: 0, unchanged: 0, skipped: 0 }),
+        collect: () => collectResult(),
         runner,
         corpusDir: "/corpus",
         writeReport: (value) => {
@@ -206,11 +233,167 @@ describe("codex dream cycle", () => {
     expect(() =>
       runCodexDreamCycle({
         dryRun: false,
-        collect: () => ({ corpusDir: "/corpus", runDir: "/run", considered: 0, written: 0, unchanged: 0, skipped: 0 }),
+        collect: () => collectResult(),
         runner,
         corpusDir: "/corpus",
         writeReport: () => undefined,
       }),
     ).toThrow(/not ready/);
+  });
+
+  it("parses JSON dry-run diagnostics and distinguishes conservative gbrain verdicts", () => {
+    let report: unknown;
+    const dir = brainDir();
+    const runner: GbrainRunner = (args) => {
+      if (args[0] === "dream") {
+        return {
+          command: ["gbrain", ...args],
+          exitCode: 0,
+          stdout: JSON.stringify({ phase: "synthesize", dry_run: true, transcripts_considered: 47, transcripts_selected: 0 }),
+          stderr: "",
+        };
+      }
+      if (args[0] === "--version") return { command: ["gbrain", ...args], exitCode: 0, stdout: "gbrain 0.33.1.0\n", stderr: "" };
+      if (args.join(" ") === "sources list --json") return { command: ["gbrain", ...args], exitCode: 0, stdout: JSON.stringify({ sources: [] }), stderr: "" };
+      if (args[0] === "config" && args[1] === "get" && args[2] === "dream.synthesize.session_corpus_dir") return { command: ["gbrain", ...args], exitCode: 0, stdout: "/corpus\n", stderr: "" };
+      if (args[0] === "config" && args[1] === "get" && args[2] === "dream.synthesize.enabled") return { command: ["gbrain", ...args], exitCode: 0, stdout: "true\n", stderr: "" };
+      return { command: ["gbrain", ...args], exitCode: 0, stdout: "", stderr: "" };
+    };
+
+    runCodexDreamCycle({
+      dryRun: true,
+      brainDir: dir,
+      collect: () => collectResult({ engineeringLikelyReviewable: 2, engineeringWithAction: 2, engineeringWithResult: 2 }),
+      runner,
+      writeReport: (value) => {
+        report = value;
+      },
+    });
+
+    expect(JSON.stringify(report)).toContain('"selected_count":0');
+    expect(JSON.stringify(report)).toContain("gbrain verdict remains conservative");
+    expect(JSON.stringify(report)).toContain("--json");
+  });
+
+  it("falls back to plain dry-run when JSON diagnostics are unsupported", () => {
+    const calls: string[][] = [];
+    let report: unknown;
+    const dir = brainDir();
+    const runner: GbrainRunner = (args) => {
+      calls.push(args);
+      if (args[0] === "dream" && args.includes("--json")) return { command: ["gbrain", ...args], exitCode: 2, stdout: "", stderr: "unknown flag: --json" };
+      if (args[0] === "dream") return { command: ["gbrain", ...args], exitCode: 0, stdout: "plain dry run", stderr: "" };
+      if (args[0] === "--version") return { command: ["gbrain", ...args], exitCode: 0, stdout: "gbrain 0.33.1.0\n", stderr: "" };
+      if (args.join(" ") === "sources list --json") return { command: ["gbrain", ...args], exitCode: 0, stdout: JSON.stringify({ sources: [] }), stderr: "" };
+      if (args[0] === "config" && args[1] === "get" && args[2] === "dream.synthesize.session_corpus_dir") return { command: ["gbrain", ...args], exitCode: 0, stdout: "/corpus\n", stderr: "" };
+      if (args[0] === "config" && args[1] === "get" && args[2] === "dream.synthesize.enabled") return { command: ["gbrain", ...args], exitCode: 0, stdout: "true\n", stderr: "" };
+      return { command: ["gbrain", ...args], exitCode: 0, stdout: "", stderr: "" };
+    };
+
+    runCodexDreamCycle({
+      dryRun: true,
+      brainDir: dir,
+      collect: () => collectResult(),
+      runner,
+      writeReport: (value) => {
+        report = value;
+      },
+    });
+
+    expect(calls.map((args) => args.join(" "))).toContain(`dream --dir ${dir} --dry-run --json`);
+    expect(calls.map((args) => args.join(" "))).toContain(`dream --dir ${dir} --dry-run`);
+    expect(JSON.stringify(report)).toContain('"available":false');
+    expect(JSON.stringify(report)).toContain("JSON diagnostics were unavailable");
+  });
+
+  it("does not hide a real JSON dry-run failure just because the error mentions --json", () => {
+    const calls: string[][] = [];
+    let report: unknown;
+    const dir = brainDir();
+    const runner: GbrainRunner = (args) => {
+      calls.push(args);
+      if (args[0] === "dream" && args.includes("--json")) {
+        return { command: ["gbrain", ...args], exitCode: 2, stdout: "", stderr: "model failed while running --json diagnostics" };
+      }
+      if (args[0] === "dream") return { command: ["gbrain", ...args], exitCode: 0, stdout: "plain dry run", stderr: "" };
+      if (args[0] === "--version") return { command: ["gbrain", ...args], exitCode: 0, stdout: "gbrain 0.33.1.0\n", stderr: "" };
+      if (args.join(" ") === "sources list --json") return { command: ["gbrain", ...args], exitCode: 0, stdout: JSON.stringify({ sources: [] }), stderr: "" };
+      if (args[0] === "config" && args[1] === "get" && args[2] === "dream.synthesize.session_corpus_dir") return { command: ["gbrain", ...args], exitCode: 0, stdout: "/corpus\n", stderr: "" };
+      if (args[0] === "config" && args[1] === "get" && args[2] === "dream.synthesize.enabled") return { command: ["gbrain", ...args], exitCode: 0, stdout: "true\n", stderr: "" };
+      return { command: ["gbrain", ...args], exitCode: 0, stdout: "", stderr: "" };
+    };
+
+    expect(() =>
+      runCodexDreamCycle({
+        dryRun: true,
+        brainDir: dir,
+        collect: () => collectResult(),
+        runner,
+        writeReport: (value) => {
+          report = value;
+        },
+      }),
+    ).toThrow(/model failed while running --json diagnostics/);
+
+    expect(calls.map((args) => args.join(" "))).toContain(`dream --dir ${dir} --dry-run --json`);
+    expect(calls.map((args) => args.join(" "))).not.toContain(`dream --dir ${dir} --dry-run`);
+    expect(JSON.stringify(report)).toContain("model failed while running --json diagnostics");
+  });
+
+  it("reports plain dry-run args when JSON fallback succeeds in detection but plain dry-run fails", () => {
+    const calls: string[][] = [];
+    let report: unknown;
+    const dir = brainDir();
+    const runner: GbrainRunner = (args) => {
+      calls.push(args);
+      if (args[0] === "dream" && args.includes("--json")) {
+        return { command: ["gbrain", ...args], exitCode: 2, stdout: "", stderr: "unknown flag: --json" };
+      }
+      if (args[0] === "dream") {
+        return { command: ["gbrain", ...args], exitCode: 3, stdout: "plain partial", stderr: "plain dry-run failed" };
+      }
+      if (args[0] === "--version") return { command: ["gbrain", ...args], exitCode: 0, stdout: "gbrain 0.33.1.0\n", stderr: "" };
+      if (args.join(" ") === "sources list --json") return { command: ["gbrain", ...args], exitCode: 0, stdout: JSON.stringify({ sources: [] }), stderr: "" };
+      if (args[0] === "config" && args[1] === "get" && args[2] === "dream.synthesize.session_corpus_dir") return { command: ["gbrain", ...args], exitCode: 0, stdout: "/corpus\n", stderr: "" };
+      if (args[0] === "config" && args[1] === "get" && args[2] === "dream.synthesize.enabled") return { command: ["gbrain", ...args], exitCode: 0, stdout: "true\n", stderr: "" };
+      return { command: ["gbrain", ...args], exitCode: 0, stdout: "", stderr: "" };
+    };
+
+    expect(() =>
+      runCodexDreamCycle({
+        dryRun: true,
+        brainDir: dir,
+        collect: () => collectResult(),
+        runner,
+        writeReport: (value) => {
+          report = value;
+        },
+      }),
+    ).toThrow(/plain dry-run failed/);
+
+    expect(calls.map((args) => args.join(" "))).toContain(`dream --dir ${dir} --dry-run --json`);
+    expect(calls.map((args) => args.join(" "))).toContain(`dream --dir ${dir} --dry-run`);
+    expect(JSON.stringify(report)).toContain(`"gbrain_args":["dream","--dir","${dir}","--dry-run"]`);
+    expect(JSON.stringify(report)).not.toContain(`"gbrain_args":["dream","--dir","${dir}","--dry-run","--json"]`);
+    expect(JSON.stringify(report)).toContain("plain dry-run failed");
+  });
+
+  it("uses private owner-only writes for default cycle reports", () => {
+    const dir = brainDir();
+    const runDir = mkdtempSync(join(tmpdir(), "codex-dream-cycle-private-"));
+    writeFileSync(join(runDir, "codex-dream-cycle.md.tmp-stale"), "stale");
+    const runner: GbrainRunner = (args) => {
+      if (args[0] === "dream") return { command: ["gbrain", ...args], exitCode: 0, stdout: JSON.stringify({ transcripts_selected: 1 }), stderr: "" };
+      if (args[0] === "--version") return { command: ["gbrain", ...args], exitCode: 0, stdout: "gbrain 0.33.1.0\n", stderr: "" };
+      if (args.join(" ") === "sources list --json") return { command: ["gbrain", ...args], exitCode: 0, stdout: JSON.stringify({ sources: [] }), stderr: "" };
+      if (args[0] === "config" && args[1] === "get" && args[2] === "dream.synthesize.session_corpus_dir") return { command: ["gbrain", ...args], exitCode: 0, stdout: "/corpus\n", stderr: "" };
+      if (args[0] === "config" && args[1] === "get" && args[2] === "dream.synthesize.enabled") return { command: ["gbrain", ...args], exitCode: 0, stdout: "true\n", stderr: "" };
+      return { command: ["gbrain", ...args], exitCode: 0, stdout: "", stderr: "" };
+    };
+
+    runCodexDreamCycle({ dryRun: true, brainDir: dir, collect: () => collectResult({ runDir }), runner });
+
+    expect(statSync(join(runDir, "codex-dream-cycle.json")).mode & 0o777).toBe(0o600);
+    expect(statSync(join(runDir, "codex-dream-cycle.md")).mode & 0o777).toBe(0o600);
   });
 });
